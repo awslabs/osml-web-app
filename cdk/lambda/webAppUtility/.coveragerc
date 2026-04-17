@@ -1,0 +1,27 @@
+# Copyright Amazon.com, Inc. or its affiliates.
+[run]
+source =
+    app.py
+    quota_tracker.py
+    quota_codes_loader.py
+omit =
+    */tests/*
+    */test_*
+    */.tox/*
+    */site-packages/*
+    */dist-packages/*
+    */lib/python*/*
+    */__pycache__/*
+    */node_modules/*
+    index.py
+    models.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod

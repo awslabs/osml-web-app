@@ -1,0 +1,79 @@
+# Copyright 2025 Amazon.com, Inc. or its affiliates.
+
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal AS build
+
+# Build time arguments
+ARG BUILD_CERT=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+ARG PIP_INSTALL_LOCATION=https://pypi.org/simple/
+ARG CONDA_ENV_NAME="osml_stac_loader"
+
+# Define required packages to install
+ARG PACKAGES="wget"
+
+# Give sudo permissions
+USER root
+
+# Configure, update, and refresh yum environment
+RUN dnf -y upgrade && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Install all our dependencies including curl for health checks
+RUN dnf install -y $PACKAGES
+
+# Clean up after installing packages
+RUN rm -rf /var/cache/dnf
+
+# Install Miniconda with architecture detection
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+        MINICONDA_VERSION="Miniconda3-latest-Linux-aarch64"; \
+    else \
+        MINICONDA_VERSION="Miniconda3-latest-Linux-x86_64"; \
+    fi && \
+    MINICONDA_URL="https://repo.anaconda.com/miniconda/${MINICONDA_VERSION}.sh" && \
+    echo "Auto-detected architecture: $ARCH, installing: ${MINICONDA_VERSION}" && \
+    wget -c ${MINICONDA_URL} && \
+    chmod +x ${MINICONDA_VERSION}.sh && \
+    ./${MINICONDA_VERSION}.sh -b -f -p /opt/conda && \
+    rm ${MINICONDA_VERSION}.sh && \
+    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh
+
+# Add conda to the path
+ENV PATH=/opt/conda/bin:$PATH
+
+# Copy conda environment file
+COPY conda/environment.yml /tmp/environment.yml
+
+# Install python with conda and remove additional unnecessary files
+RUN conda config --system --prepend channels conda-forge && \
+    conda config --system --set auto_update_conda false && \
+    conda config --system --set show_channel_urls true && \
+    conda config --system --remove channels defaults && \
+    conda env create -n ${CONDA_ENV_NAME} --file /tmp/environment.yml && \
+    conda clean -afy && \
+    rm -rf /opt/conda/pkgs && \
+    rm /tmp/environment.yml
+
+# Stage 2: FastMCP server
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal AS mcp-server
+
+# Environment configuration
+ENV CONDA_ENV_NAME="osml_stac_loader"
+ENV PATH="/opt/conda/bin:/opt/conda/envs/osml_stac_loader/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Copy the conda environment from build stage
+COPY --from=build /opt/conda /opt/conda
+
+# Create conda activation script
+RUN ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh
+
+# Copy application code
+COPY . /app
+WORKDIR /app
+
+# Expose port
+EXPOSE 8080
+
+# Set entry point for FastMCP server
+CMD ["/opt/conda/envs/osml_stac_loader/bin/python", "deployed_server.py"]

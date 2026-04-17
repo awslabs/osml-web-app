@@ -1,0 +1,2 @@
+# Placeholder directory for Lambda layer bundling
+# The actual dependencies are installed during CDK bundling via pip

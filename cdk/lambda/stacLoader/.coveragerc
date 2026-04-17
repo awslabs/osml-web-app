@@ -1,0 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates.
+[run]
+omit =
+    tests/*
+    .tox/*
+    conda/*

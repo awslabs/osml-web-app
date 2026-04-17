@@ -1,0 +1,49 @@
+{
+  "name": "osml-web-app-cdk",
+  "version": "0.0.1",
+  "description": "AWS CDK infrastructure for the OSML Web Application",
+  "author": "Amazon Web Services",
+  "license": "Apache-2.0",
+  "private": true,
+  "bin": {
+    "cdk": "bin/cdk.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/patch-cdk-cleanup.js",
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest --reporters jest-silent-reporter",
+    "test:coverage": "jest --coverage",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "npm run build:zip --prefix .. && cdk synth && cdk deploy --all --require-approval never",
+    "deploy:all": "cdk deploy --all --require-approval never",
+    "destroy": "cdk destroy --all",
+    "diff": "cdk diff",
+    "format": "cd .. && npx prettier --write \"cdk/**/*.{ts,js}\"",
+    "format:check": "cd .. && npx prettier --check \"cdk/**/*.{ts,js}\"",
+    "lint": "cd .. && npx eslint --max-warnings 10 --fix \"cdk/**/*.{js,ts}\"",
+    "lint:check": "cd .. && npx eslint --max-warnings 10 \"cdk/**/*.{js,ts}\""
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.2.0",
+    "aws-cdk": "^2.1107.0",
+    "fast-check": "^4.4.0",
+    "jest": "^30.0.5",
+    "jest-silent-reporter": "^0.6.0",
+    "prettier": "^3.6.2",
+    "source-map-support": "^0.5.21",
+    "ts-jest": "^29.4.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@cdklabs/cdk-enterprise-iac": "^0.1.0",
+    "aws-cdk-lib": "^2.243.0",
+    "cdk-nag": "^2.37.9",
+    "constructs": "^10.4.2",
+    "osml-cdk-constructs": "^2.1.0",
+    "source-map-support": "^0.5.21"
+  }
+}
