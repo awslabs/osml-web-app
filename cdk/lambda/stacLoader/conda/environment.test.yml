@@ -1,0 +1,15 @@
+# Copyright 2025 Amazon.com, Inc. or its affiliates.
+
+name: stac_loader_test
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - awslambdaric
+  - python-json-logger
+  - conda-forge::mcp=1.21.2
+  - pytest>=8.0.0
+  - pytest-asyncio>=0.23.0
+  - pip:
+      - httpx>=0.27.0
+      - httpx-sse>=0.4.0

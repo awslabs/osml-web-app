@@ -1,0 +1,150 @@
+repos:
+  # Standard hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Python formatting and linting
+  - repo: https://github.com/psf/black
+    rev: 24.3.0
+    hooks:
+      - id: black
+        args: ["--line-length=125"]
+        types: [file, python]
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ["--line-length=125", "--profile=black"]
+        types: [file, python]
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: ["--max-line-length=125", "--max-complexity=10"]
+        types: [file, python]
+
+  # Security scanning (manual)
+  - repo: https://github.com/aws-samples/automated-security-helper
+    rev: 'v3.0.0'
+    hooks:
+      - id: ash
+        stages: [manual]
+
+  # Local hooks for security, copyright, TypeScript, and tests
+  - repo: local
+    hooks:
+      - id: git-secrets
+        name: git-secrets
+        entry: git-secrets --scan
+        language: system
+        stages: [pre-commit]
+
+      - id: check-copyright
+        name: Check for copyright
+        entry: python .github/hooks/check-copyright.py
+        language: system
+        exclude: |
+          (?x)^(
+            ^\..+|
+            docs/.*|
+            .+\.md$|
+            .+\.json$|
+            .+\.ya?ml$|
+            .+\.config\.js$|
+            .+\.config\.mjs$|
+            eslint\.config\.mjs$|
+            jest\.config\.js$|
+            jest\.setup\.js$|
+            .+\.lock$|
+            .+\.png$|
+            .+\.ico$|
+            .+\.jpg$|
+            .+\.jpeg$|
+            .+\.gif$|
+            .+\.svg$|
+            .+\.woff2?$|
+            .+\.ttf$|
+            .+\.eot$|
+            .+\.zip$|
+            .+\.map$|
+            .+\.tsbuildinfo$|
+            .+\.example$|
+            .+\.gitkeep$|
+            .*/node_modules/.*|
+            .*/cdk\.out/.*|
+            .*/coverage/.*|
+            .*/htmlcov/.*|
+            .*/dist/.*|
+            .*/.next/.*|
+            .*/public/.*|
+            .*/.tox/.*|
+            cdk/config/.*|
+            LICENSE|
+            NOTICE|
+            README\.md|
+            CONTRIBUTING\.md|
+            CODE_OF_CONDUCT\.md|
+            SECURITY\.md|
+          )$
+
+      # Unified npm install
+      - id: npm-install
+        name: Install npm dependencies
+        entry: bash -c 'npm ci && cd cdk && npm ci'
+        language: system
+        files: ^(src|cdk)/.*\.(ts|tsx|js|jsx|json)$
+        exclude: node_modules/
+        pass_filenames: false
+
+      # Unified ESLint for entire project
+      - id: eslint
+        name: ESLint
+        entry: bash -c 'npx eslint --fix --max-warnings 0'
+        language: system
+        files: ^(src|cdk)/.*\.(ts|tsx|js)$
+        types: [file]
+        pass_filenames: false
+
+      # Unified Prettier for entire project
+      - id: prettier
+        name: Prettier
+        entry: npx prettier --write --ignore-unknown
+        language: system
+        files: ^(src|cdk)/.*\.(ts|tsx|js|jsx|json|yml|yaml|md)$
+        pass_filenames: true
+
+      # CDK Jest Tests
+      - id: cdk-jest
+        name: CDK Jest Tests
+        entry: bash -c 'cd cdk && npm test'
+        language: system
+        files: ^cdk/.*\.(ts|tsx)$
+        types: [file]
+        exclude: ^cdk/(node_modules|cdk\.out|\.tox)/
+        pass_filenames: false
+
+      # Frontend Jest Tests
+      - id: frontend-jest
+        name: Frontend Jest Tests
+        entry: bash -c 'npm test -- --passWithNoTests'
+        language: system
+        files: ^src/.*\.(ts|tsx)$
+        types: [file]
+        exclude: node_modules/
+        pass_filenames: false
+
+      # Python Lambda tests (uses tox to create proper conda environment)
+      - id: lambda-pytest
+        name: Lambda pytest
+        entry: bash -c 'cd cdk/lambda/webAppUtility && tox'
+        language: system
+        files: ^cdk/lambda/.*\.py$
+        types: [file, python]
+        exclude: ^cdk/lambda/.*/(\.tox|__pycache__|\.pytest_cache)/
+        pass_filenames: false

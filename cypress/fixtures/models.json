@@ -1,0 +1,28 @@
+{
+  "models": [
+    {
+      "modelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "modelName": "Claude Sonnet 4.5",
+      "providerName": "Anthropic",
+      "inputModalities": ["TEXT"],
+      "outputModalities": ["TEXT"],
+      "supportsStreaming": true,
+      "supportsToolUse": true,
+      "modelLifecycle": "ACTIVE",
+      "customizationsSupported": [],
+      "inferenceTypesSupported": ["INFERENCE_PROFILE"]
+    },
+    {
+      "modelId": "us.anthropic.claude-opus-4-5-20251101-v1:0",
+      "modelName": "Claude Opus 4.5",
+      "providerName": "Anthropic",
+      "inputModalities": ["TEXT"],
+      "outputModalities": ["TEXT"],
+      "supportsStreaming": true,
+      "supportsToolUse": true,
+      "modelLifecycle": "ACTIVE",
+      "customizationsSupported": [],
+      "inferenceTypesSupported": ["INFERENCE_PROFILE"]
+    }
+  ]
+}
