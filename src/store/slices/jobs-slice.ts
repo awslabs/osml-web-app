@@ -150,7 +150,9 @@ export const jobsSlice = createSlice({
   initialState,
   reducers: {
     setSelectedJobs: (state, action: PayloadAction<ImageProcessingJob[]>) => {
-      // Auto-assign palette colors to newly selected jobs that don't have a style yet
+      // Auto-assign palette colors to newly selected jobs that don't have a style yet.
+      // Existing styles persist across deselect/reselect — they are only cleared
+      // when a job is deleted (removeJobOptimistically / deleteJob.pending).
       const existingStyleIds = new Set(
         Object.keys(state.selection.layerStyles)
       );
@@ -389,6 +391,8 @@ export const selectLayerStyles = (state: RootState) =>
   state.jobs.selection.layerStyles;
 export const selectLayerStyle = (state: RootState, jobId: string) =>
   state.jobs.selection.layerStyles[jobId];
+export const selectIsJobSelected = (state: RootState, jobId: string) =>
+  state.jobs.selection.selectedJobs.some((j) => j.job_id === jobId);
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
@@ -406,20 +410,40 @@ export function extractKeyFromS3Uri(uri: string): string {
 
 // ─── Data-Fetching Thunks ────────────────────────────────────────────────────
 
+/**
+ * Fetch detection GeoJSON for a job and register the corresponding overlay
+ * layer. Uses the cache as a fast path for jobs that were previously
+ * fetched, making deselect/reselect toggles instant with no network cost.
+ *
+ * The thunk is triggered exclusively by the fetchDataMiddleware in response
+ * to a job being added to `state.jobs.selection.selectedJobs`. Teardown on
+ * deselection is handled by the middleware.
+ */
 export const fetchGeoJSONData =
   (job: ImageProcessingJob) =>
   async (dispatch: AppDispatch, getState: () => RootState) => {
     const layerId = `detection-${job.job_id}`;
     const cache = GeoJSONCacheService.getInstance();
-    const state = getState();
 
-    // Skip if layer already exists with loading: false and no error
-    const existingLayer = state.overlay?.layers[layerId];
-    if (
-      existingLayer &&
-      !existingLayer.metadata?.loading &&
-      !existingLayer.metadata?.error
-    ) {
+    // Fast path: cached data from a prior selection. Re-register the overlay
+    // layer from the cache without any network call.
+    if (cache.has(layerId)) {
+      const cached = cache.get(layerId);
+      const featureCount = cached?.features.length ?? 0;
+      dispatch(
+        addLayer({
+          id: layerId,
+          name: `Detection: ${job.job_id}`,
+          source: "detection",
+          zIndex: 10,
+          featureCount,
+          metadata: {
+            jobId: job.job_id,
+            loading: false,
+            layerType: "vector"
+          }
+        })
+      );
       return;
     }
 
@@ -429,12 +453,10 @@ export const fetchGeoJSONData =
         id: layerId,
         name: `Detection: ${job.job_id}`,
         source: "detection",
-        visible: false,
         zIndex: 10,
         featureCount: 0,
         metadata: {
           jobId: job.job_id,
-          groupId: `job-${job.job_id}`,
           loading: true,
           layerType: "vector"
         }
@@ -531,15 +553,14 @@ export const fetchGeoJSONData =
           setTimeout(resolve, pollingState.pollInterval)
         );
 
-        // Check if the job still exists before continuing to poll
+        // Exit polling quietly if the job is no longer selected. The
+        // middleware handles overlay/cache cleanup on deselection; we just
+        // need to stop doing more work.
         const currentState = getState();
-        const stillExists = currentState.jobs.jobsList.jobs.some(
+        const stillSelected = currentState.jobs.selection.selectedJobs.some(
           (j) => j.job_id === job.job_id
         );
-        if (!stillExists) {
-          // Job deleted during poll — clean up layer and cache
-          dispatch(removeLayer(layerId));
-          cache.delete(layerId);
+        if (!stillSelected) {
           return;
         }
 
@@ -564,19 +585,49 @@ export const fetchGeoJSONData =
     await queryStacForDetections();
   };
 
+/**
+ * Fetch viewpoint metadata for a job and, when the viewpoint is READY,
+ * register an imagery overlay layer. The imagery layer is created
+ * unconditionally (no coupling to the detection layer's state) — presence
+ * in `overlay.layers` is the sole rendering signal.
+ *
+ * Uses already-loaded viewpoint data in `state.imagery.viewpointData` as a
+ * fast path to avoid redundant network calls across deselect/reselect.
+ */
 export const fetchViewpointStatus =
   (jobId: string) =>
   async (dispatch: AppDispatch, getState: () => RootState) => {
     const state = getState();
     const existingData = state.imagery.viewpointData[jobId];
 
-    // If already loaded with READY status and has extent, or has error, don't poll
+    // Fast path: if viewpoint is already READY with extent, re-register the
+    // imagery layer from cached data. Useful after a deselect/reselect.
     if (
       existingData?.loaded &&
-      (existingData.error ||
-        (existingData.viewpoint?.viewpoint_status === "READY" &&
-          existingData.extent))
+      existingData.viewpoint?.viewpoint_status === "READY" &&
+      existingData.extent
     ) {
+      const imageryLayerId = `imagery-${jobId}`;
+      if (!state.overlay?.layers[imageryLayerId]) {
+        dispatch(
+          addLayer({
+            id: imageryLayerId,
+            name: `Imagery: ${jobId}`,
+            source: "detection", // reuse source type for now
+            zIndex: 5,
+            featureCount: 0,
+            metadata: {
+              jobId,
+              layerType: "imagery"
+            }
+          })
+        );
+      }
+      return;
+    }
+
+    // If already loaded with an error, don't retry
+    if (existingData?.loaded && existingData.error) {
       return;
     }
 
@@ -596,15 +647,14 @@ export const fetchViewpointStatus =
           );
 
           setTimeout(() => {
-            // Check if job still exists before polling
+            // Exit polling if the job is no longer selected. Middleware
+            // handles cleanup of viewpointData on deselection/deletion.
             const current = getState();
-            const stillExists = current.jobs.jobsList.jobs.some(
+            const stillSelected = current.jobs.selection.selectedJobs.some(
               (j) => j.job_id === jobId
             );
-            if (stillExists) {
+            if (stillSelected) {
               dispatch(fetchViewpointStatus(jobId));
-            } else {
-              dispatch(removeViewpointData({ jobId }));
             }
           }, VIEWPOINT_POLL_INTERVAL);
           break;
@@ -626,26 +676,22 @@ export const fetchViewpointStatus =
               })
             );
 
-            // Register imagery layer in overlay-slice so visibility is
-            // grouped with the detection layer via shared groupId
+            // Register imagery layer in overlay-slice. Presence in
+            // overlay.layers = renders; middleware tears it down on
+            // deselection/deletion.
             if (extent) {
               const imageryLayerId = `imagery-${jobId}`;
               const currentState = getState();
               if (!currentState.overlay?.layers[imageryLayerId]) {
-                // Match visibility of the detection layer (if it exists)
-                const detectionLayer =
-                  currentState.overlay?.layers[`detection-${jobId}`];
                 dispatch(
                   addLayer({
                     id: imageryLayerId,
                     name: `Imagery: ${jobId}`,
                     source: "detection", // reuse source type for now
-                    visible: detectionLayer?.visible ?? true,
                     zIndex: 5,
                     featureCount: 0,
                     metadata: {
                       jobId,
-                      groupId: `job-${jobId}`,
                       layerType: "imagery"
                     }
                   })
@@ -694,19 +740,82 @@ export const fetchViewpointStatus =
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
+/**
+ * Actions that represent a "full delete" of a job (as opposed to a simple
+ * deselection). When a full delete occurs, the middleware additionally
+ * clears the GeoJSON cache entry and the viewpoint data — state a simple
+ * deselect should preserve for instant re-selection.
+ */
+const FULL_DELETE_ACTION_TYPES: ReadonlySet<string> = new Set([
+  removeJobOptimistically.type,
+  deleteJob.pending.type
+]);
+
+/**
+ * Diff-based middleware: every action that mutates
+ * `state.jobs.selection.selectedJobs` triggers layer reconciliation.
+ *
+ * - Jobs newly added to the selection → dispatch `fetchGeoJSONData` and
+ *   `fetchViewpointStatus` to load (or re-register from cache) detection
+ *   and imagery overlay layers.
+ * - Jobs removed from the selection → tear down the matching overlay
+ *   layers. For simple deselections, viewpoint data and the GeoJSON cache
+ *   are preserved so that re-selection is instant. For deletions, the
+ *   viewpoint data and cache are also cleared so no stale data remains.
+ *
+ * This is the single authoritative path from "user intent" (selection) to
+ * "rendered layers". The views are pure projections of `overlay.layers`
+ * and `imagery.viewpointData`.
+ */
 export const fetchDataMiddleware: Middleware =
   (store) => (next) => (action) => {
+    const typedAction = action as { type?: string };
+    const prevSelectedJobs = (store.getState() as RootState).jobs.selection
+      .selectedJobs;
+
     const result = next(action);
 
-    if (setSelectedJobs.match(action)) {
-      (action.payload as ImageProcessingJob[]).forEach(
-        (job: ImageProcessingJob) => {
-          store.dispatch(fetchGeoJSONData(job) as unknown as AnyAction);
-          store.dispatch(
-            fetchViewpointStatus(job.job_id) as unknown as AnyAction
-          );
-        }
-      );
+    const nextSelectedJobs = (store.getState() as RootState).jobs.selection
+      .selectedJobs;
+
+    // No-op if selection didn't change.
+    if (prevSelectedJobs === nextSelectedJobs) {
+      return result;
+    }
+
+    const prevIds = new Set(prevSelectedJobs.map((j) => j.job_id));
+    const nextIds = new Set(nextSelectedJobs.map((j) => j.job_id));
+
+    const added = nextSelectedJobs.filter((j) => !prevIds.has(j.job_id));
+    const removed = prevSelectedJobs.filter((j) => !nextIds.has(j.job_id));
+
+    if (added.length === 0 && removed.length === 0) {
+      return result;
+    }
+
+    const cache = GeoJSONCacheService.getInstance();
+    const isFullDelete =
+      typeof typedAction.type === "string" &&
+      FULL_DELETE_ACTION_TYPES.has(typedAction.type);
+
+    for (const job of added) {
+      store.dispatch(fetchGeoJSONData(job) as unknown as AnyAction);
+      store.dispatch(fetchViewpointStatus(job.job_id) as unknown as AnyAction);
+    }
+
+    for (const job of removed) {
+      const detectionLayerId = `detection-${job.job_id}`;
+      const imageryLayerId = `imagery-${job.job_id}`;
+
+      store.dispatch(removeLayer(detectionLayerId));
+      store.dispatch(removeLayer(imageryLayerId));
+
+      if (isFullDelete) {
+        // Clear cache and viewpoint data. Simple deselections preserve
+        // these for instant re-selection; deletions discard them.
+        cache.delete(detectionLayerId);
+        store.dispatch(removeViewpointData({ jobId: job.job_id }));
+      }
     }
 
     return result;

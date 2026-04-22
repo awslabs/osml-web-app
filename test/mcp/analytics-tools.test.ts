@@ -70,7 +70,6 @@ function addDetectionLayer(store: Store, id: string, name: string) {
       id,
       name,
       source: "detection",
-      visible: true,
       zIndex: 1,
       featureCount: 0
     })

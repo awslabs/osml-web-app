@@ -8,12 +8,10 @@
  *
  * 1. Detection layer data is read from GeoJSONCacheService when overlay layer exists
  * 2. Agent features are read from state.overlay.inlineFeatures["agent-features"]
- * 3. Layers with visible: false are not included in rendering data
+ * 3. Layer presence in overlay.layers = rendered (no separate visibility flag)
  * 4. Missing cache entries (null) don't cause errors
  *
  * We test the useOverlayLayerData hook directly using renderHook.
- *
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.6
  */
 
 import { configureStore } from "@reduxjs/toolkit";
@@ -28,7 +26,7 @@ import overlayReducer, {
   addLayer,
   GeoJSONFeature,
   OverlayLayer,
-  setLayerVisibility
+  removeLayer
 } from "@/store/slices/overlay-slice";
 
 // ---------------------------------------------------------------------------
@@ -106,7 +104,6 @@ const sampleDetectionLayer: OverlayLayer = {
   id: "detection-job-123",
   name: "Detection: job-123",
   source: "detection",
-  visible: true,
   zIndex: 10,
   featureCount: 2,
   metadata: { jobId: "job-123", loading: false }
@@ -123,7 +120,6 @@ describe("Map Page overlay consumption (useOverlayLayerData)", () => {
 
   // =========================================================================
   // Test 1: Detection layer data is read from GeoJSONCacheService
-  // Validates: Requirements 5.1, 5.2
   // =========================================================================
 
   describe("detection layer data from cache", () => {
@@ -172,7 +168,6 @@ describe("Map Page overlay consumption (useOverlayLayerData)", () => {
 
   // =========================================================================
   // Test 2: Agent features are read from inlineFeatures["agent-features"]
-  // Validates: Requirements 5.1, 5.3
   // =========================================================================
 
   describe("agent features from inline features", () => {
@@ -204,7 +199,6 @@ describe("Map Page overlay consumption (useOverlayLayerData)", () => {
           id: "agent-features",
           name: "Agent Features",
           source: "agent",
-          visible: true,
           zIndex: 100,
           featureCount: 0
         })
@@ -253,93 +247,55 @@ describe("Map Page overlay consumption (useOverlayLayerData)", () => {
   });
 
   // =========================================================================
-  // Test 3: Layers with visible: false are not included in rendering data
-  // Validates: Requirements 5.4
+  // Test 3: Presence-based rendering
+  //
+  // Under the new model a layer record's presence in overlay.layers is the
+  // sole rendering signal. There is no visibility flag; the jobs-slice
+  // middleware adds and removes layer records as jobs enter and leave the
+  // selection.
   // =========================================================================
 
-  describe("layer visibility filtering", () => {
-    it("detection layer data is still returned by hook even when visible is false (view handles visibility)", () => {
+  describe("presence-based rendering", () => {
+    it("derives renderable layers from overlay.layers keys", () => {
       const store = createTestStore();
-      const cache = GeoJSONCacheService.getInstance();
 
-      // Add a hidden detection layer
-      store.dispatch(addLayer({ ...sampleDetectionLayer, visible: false }));
-      cache.set("detection-job-123", sampleDetectionData);
-
-      // The hook returns data regardless — the VIEW is responsible for
-      // checking layer.visible before rendering. We verify the view can
-      // check visibility from the overlay state.
-      const { result } = renderHook(
-        () => ({
-          data: useOverlayLayerData("detection-job-123"),
-          layer: store.getState().overlay.layers["detection-job-123"]
-        }),
-        { wrapper: createWrapper(store) }
-      );
-
-      // Data is available
-      expect(result.current.data).not.toBeNull();
-      // But the layer is marked as not visible
-      expect(result.current.layer.visible).toBe(false);
-    });
-
-    it("view can derive which layers to skip based on visible flag", () => {
-      const store = createTestStore();
-      const cache = GeoJSONCacheService.getInstance();
-
-      // Add two detection layers — one visible, one hidden
       store.dispatch(addLayer(sampleDetectionLayer));
       store.dispatch(
         addLayer({
           ...sampleDetectionLayer,
           id: "detection-job-456",
           name: "Detection: job-456",
-          visible: false,
           metadata: { jobId: "job-456", loading: false }
         })
       );
 
-      cache.set("detection-job-123", sampleDetectionData);
-      cache.set("detection-job-456", {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [5, 5] },
-            properties: {}
-          }
-        ]
-      });
-
       const state = store.getState().overlay;
-      const visibleLayerIds = state.layerOrder.filter(
-        (id) => state.layers[id]?.visible
-      );
+      const renderableIds = state.layerOrder.filter((id) => !!state.layers[id]);
 
-      expect(visibleLayerIds).toContain("detection-job-123");
-      expect(visibleLayerIds).not.toContain("detection-job-456");
+      expect(renderableIds).toContain("detection-job-123");
+      expect(renderableIds).toContain("detection-job-456");
     });
 
-    it("toggling visibility updates the layer state", () => {
+    it("removing a layer makes it no longer renderable", () => {
       const store = createTestStore();
 
       store.dispatch(addLayer(sampleDetectionLayer));
-      expect(store.getState().overlay.layers["detection-job-123"].visible).toBe(
-        true
-      );
+      expect(
+        store.getState().overlay.layers["detection-job-123"]
+      ).toBeDefined();
 
-      store.dispatch(
-        setLayerVisibility({ layerId: "detection-job-123", visible: false })
-      );
-      expect(store.getState().overlay.layers["detection-job-123"].visible).toBe(
-        false
+      store.dispatch(removeLayer("detection-job-123"));
+      expect(
+        store.getState().overlay.layers["detection-job-123"]
+      ).toBeUndefined();
+      expect(store.getState().overlay.layerOrder).not.toContain(
+        "detection-job-123"
       );
     });
   });
 
   // =========================================================================
   // Test 4: Missing cache entries (null) don't cause errors
-  // Validates: Requirements 5.6
   // =========================================================================
 
   describe("missing cache entries", () => {

@@ -21,7 +21,6 @@ import overlayReducer, {
   removeLayer,
   selectFeature,
   setLayerOrder,
-  toggleLayerVisibility,
   updateFeatureStyle,
   updateLayerMetadata
 } from "@/store/slices/overlay-slice";
@@ -64,7 +63,6 @@ const layerArb: fc.Arbitrary<OverlayLayer> = fc.record({
   id: layerIdArb,
   name: fc.string({ minLength: 1, maxLength: 30 }),
   source: layerSourceArb,
-  visible: fc.boolean(),
   zIndex: fc.nat({ max: 200 }),
   featureCount: fc.constant(0),
   style: fc.constant(undefined),
@@ -123,17 +121,13 @@ const updatedByArb = fc.constantFrom("agent" as const, "user" as const);
 
 describe("overlay-slice", () => {
   // =========================================================================
-  // 6.1 — Property 2: Inline feature count consistency
+  // Property 2: Inline feature count consistency
   // =========================================================================
 
   /**
-   * Property 2: Inline feature count consistency
-   *
    * For any random sequence of addFeature / removeFeature actions, the
    * featureCount stored on the "agent-features" layer SHALL always equal
    * the length of inlineFeatures["agent-features"].
-   *
-   * **Validates: Requirements 2.4, 2.5, 7.1, 7.2**
    */
   describe("Property 2: Inline feature count consistency", () => {
     it("layers['agent-features'].featureCount === inlineFeatures['agent-features'].length after any add/remove sequence", () => {
@@ -194,17 +188,13 @@ describe("overlay-slice", () => {
   });
 
   // =========================================================================
-  // 6.2 — Property 3: Layer order integrity
+  // Property 3: Layer order integrity
   // =========================================================================
 
   /**
-   * Property 3: Layer order integrity
-   *
    * For any random sequence of addLayer / removeLayer / setLayerOrder
    * actions, every ID in layerOrder exists in layers, and every key in
    * layers appears exactly once in layerOrder (bijection).
-   *
-   * **Validates: Requirements 1.3, 1.5, 1.10**
    */
   describe("Property 3: Layer order integrity", () => {
     it("bijection between layers keys and layerOrder entries after any add/remove/reorder sequence", () => {
@@ -261,18 +251,9 @@ describe("overlay-slice", () => {
   });
 
   // =========================================================================
-  // 6.3 — Property 4: addFeature convenience action
+  // Property 4: addFeature convenience action
   // =========================================================================
 
-  /**
-   * Property 4: addFeature convenience action
-   *
-   * For any random GeoJSON feature, after dispatching addFeature the
-   * "agent-features" layer SHALL exist, the feature SHALL be present in
-   * inlineFeatures, and there SHALL be no duplicate feature IDs.
-   *
-   * **Validates: Requirements 7.1**
-   */
   describe("Property 4: addFeature convenience action", () => {
     it("agent-features layer exists, feature present, no duplicates after addFeature", () => {
       fc.assert(
@@ -308,17 +289,9 @@ describe("overlay-slice", () => {
   });
 
   // =========================================================================
-  // 6.4 — Property 5: removeLayer cleans up all references
+  // Property 5: removeLayer cleans up all references
   // =========================================================================
 
-  /**
-   * Property 5: removeLayer cleans up all references
-   *
-   * For any random layer additions followed by removals, the removed layer
-   * ID SHALL be absent from layers, layerOrder, and inlineFeatures.
-   *
-   * **Validates: Requirements 1.5, 8.4**
-   */
   describe("Property 5: removeLayer cleans up all references", () => {
     it("removed layer ID is absent from layers, layerOrder, and inlineFeatures", () => {
       fc.assert(
@@ -350,55 +323,9 @@ describe("overlay-slice", () => {
   });
 
   // =========================================================================
-  // 6.5 — Property 6: Toggle visibility round-trip
+  // Property 12: Style merge preserves existing properties
   // =========================================================================
 
-  /**
-   * Property 6: Toggle visibility round-trip
-   *
-   * For any layer, toggling visibility twice SHALL return the visible flag
-   * to its original value.
-   *
-   * **Validates: Requirements 1.6, 1.7**
-   */
-  describe("Property 6: Toggle visibility round-trip", () => {
-    it("toggling visibility twice returns to original value", () => {
-      fc.assert(
-        fc.property(layerArb, (layer) => {
-          let state: OverlayState = overlayReducer(undefined, {
-            type: "@@INIT"
-          });
-
-          // Add the layer
-          state = overlayReducer(state, addLayer(layer));
-          const originalVisible = state.layers[layer.id]?.visible;
-
-          // Toggle once
-          state = overlayReducer(state, toggleLayerVisibility(layer.id));
-          expect(state.layers[layer.id]?.visible).toBe(!originalVisible);
-
-          // Toggle again — should be back to original
-          state = overlayReducer(state, toggleLayerVisibility(layer.id));
-          expect(state.layers[layer.id]?.visible).toBe(originalVisible);
-        }),
-        { numRuns: 100 }
-      );
-    });
-  });
-
-  // =========================================================================
-  // 6.6 — Property 12: Style merge preserves existing properties
-  // =========================================================================
-
-  /**
-   * Property 12: Style merge preserves existing properties
-   *
-   * For any feature with an existing style and a partial style update,
-   * the merged style SHALL contain all original properties not overridden
-   * plus all update properties.
-   *
-   * **Validates: Requirements 2.8, 7.5**
-   */
   describe("Property 12: Style merge preserves existing properties", () => {
     it("merged style contains all original properties not overridden plus all update properties", () => {
       fc.assert(
@@ -470,24 +397,15 @@ describe("overlay-slice", () => {
   });
 
   // =========================================================================
-  // 6.7 — Property 8: No large GeoJSON in Redux state
+  // Property 8: No large GeoJSON in Redux state
   // =========================================================================
 
-  /**
-   * Property 8: No large GeoJSON in Redux state
-   *
-   * After any sequence of addLayer with source: "detection", the
-   * inlineFeatures record SHALL NOT contain entries for detection layer IDs.
-   *
-   * **Validates: Requirements 2.9, 8.1, 8.2**
-   */
   describe("Property 8: No large GeoJSON in Redux state", () => {
     it("inlineFeatures does not contain entries for detection layer IDs", () => {
       const detectionLayerArb: fc.Arbitrary<OverlayLayer> = fc.record({
         id: layerIdArb.map((id) => `detection-${id}`),
         name: fc.string({ minLength: 1, maxLength: 30 }),
         source: fc.constant("detection" as const),
-        visible: fc.boolean(),
         zIndex: fc.nat({ max: 200 }),
         featureCount: fc.nat({ max: 1000 }),
         style: fc.constant(undefined),
@@ -521,20 +439,14 @@ describe("overlay-slice", () => {
   });
 
   // =========================================================================
-  // 6.8 — Unit tests for overlay-slice reducers
+  // Unit tests for overlay-slice reducers
   // =========================================================================
 
-  /**
-   * Unit tests covering core reducer behaviour.
-   *
-   * Requirements: 1.1-1.10, 2.1-2.9, 7.1-7.5
-   */
   describe("Unit tests", () => {
     const sampleLayer: OverlayLayer = {
       id: "test-layer-1",
       name: "Test Layer",
       source: "detection",
-      visible: true,
       zIndex: 10,
       featureCount: 0,
       metadata: { jobId: "job-1", loading: false }
@@ -566,8 +478,7 @@ describe("overlay-slice", () => {
 
       const updatedLayer: OverlayLayer = {
         ...sampleLayer,
-        name: "Updated Name",
-        visible: false
+        name: "Updated Name"
       };
       state = overlayReducer(state, addLayer(updatedLayer));
 
@@ -616,7 +527,6 @@ describe("overlay-slice", () => {
 
       expect(state.layers[AGENT_LAYER_ID]).toBeDefined();
       expect(state.layers[AGENT_LAYER_ID].source).toBe("agent");
-      expect(state.layers[AGENT_LAYER_ID].visible).toBe(true);
       expect(state.layers[AGENT_LAYER_ID].zIndex).toBe(100);
       expect(state.layerOrder).toContain(AGENT_LAYER_ID);
       expect(state.inlineFeatures[AGENT_LAYER_ID]).toHaveLength(1);
@@ -699,19 +609,6 @@ describe("overlay-slice", () => {
       expect(state.layers[AGENT_LAYER_ID].featureCount).toBe(0);
     });
 
-    // --- toggleLayerVisibility ---
-
-    it("toggleLayerVisibility flips visible boolean", () => {
-      let state = overlayReducer(emptyState, addLayer(sampleLayer));
-      expect(state.layers[sampleLayer.id].visible).toBe(true);
-
-      state = overlayReducer(state, toggleLayerVisibility(sampleLayer.id));
-      expect(state.layers[sampleLayer.id].visible).toBe(false);
-
-      state = overlayReducer(state, toggleLayerVisibility(sampleLayer.id));
-      expect(state.layers[sampleLayer.id].visible).toBe(true);
-    });
-
     // --- setLayerOrder ---
 
     it("setLayerOrder reorders layers", () => {
@@ -760,7 +657,7 @@ describe("overlay-slice", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Branch coverage: removeLayer/removeFeature selectedFeatureId clearing (lines 95-96, 230)
+// Branch coverage: removeLayer/removeFeature selectedFeatureId clearing
 // ---------------------------------------------------------------------------
 
 import { configureStore } from "@reduxjs/toolkit";
@@ -778,7 +675,11 @@ describe("overlay-slice - branch coverage", () => {
           id: "feat-1",
           type: "Feature",
           geometry: { type: "Point", coordinates: [0, 0] },
-          properties: { description: "test" }
+          properties: {
+            description: "test",
+            createdBy: "agent",
+            createdAt: "2025-01-01T00:00:00.000Z"
+          }
         },
         updatedBy: "agent"
       })
@@ -799,7 +700,11 @@ describe("overlay-slice - branch coverage", () => {
           id: "feat-2",
           type: "Feature",
           geometry: { type: "Point", coordinates: [1, 1] },
-          properties: { description: "test2" }
+          properties: {
+            description: "test2",
+            createdBy: "agent",
+            createdAt: "2025-01-01T00:00:00.000Z"
+          }
         },
         updatedBy: "agent"
       })

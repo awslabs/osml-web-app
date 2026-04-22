@@ -27,7 +27,10 @@ import imageryReducer, {
   setViewpointData,
   ViewpointData
 } from "@/store/slices/imagery-slice";
-import overlayReducer from "@/store/slices/overlay-slice";
+import overlayReducer, {
+  addLayer,
+  removeLayer
+} from "@/store/slices/overlay-slice";
 import { Viewpoint, ViewpointExtent } from "@/store/types";
 
 // ─── Cesium Mocks ────────────────────────────────────────────────────────────
@@ -161,6 +164,30 @@ const sampleExtent: ViewpointExtent = {
   maxLat: 38.0
 };
 
+/**
+ * Add an imagery overlay layer for a job. Under the current model, the
+ * useImageryTileEffect hook only renders imagery tiles when an
+ * `imagery-<jobId>` record exists in overlay.layers; in production this
+ * record is created by the jobs-slice middleware when a job is selected.
+ * Tests that directly dispatch `setViewpointData` must add the matching
+ * overlay record too.
+ */
+function addImageryOverlay(
+  store: ReturnType<typeof configureStore>,
+  jobId: string
+) {
+  store.dispatch(
+    addLayer({
+      id: `imagery-${jobId}`,
+      name: `Imagery: ${jobId}`,
+      source: "detection",
+      zIndex: 5,
+      featureCount: 0,
+      metadata: { jobId, layerType: "imagery" }
+    })
+  );
+}
+
 /** Create a minimal Redux store with the imagery slice. */
 function createTestStore() {
   return configureStore({
@@ -238,6 +265,7 @@ describe("Globe imagery tile rendering", () => {
       });
 
       store.dispatch(setViewpointData(vpData));
+      addImageryOverlay(store, "job-1");
 
       const { useImageryTileEffect } =
         require("@/app/globe/useImageryTileEffect") as typeof import("@/app/globe/useImageryTileEffect");
@@ -382,7 +410,7 @@ describe("Globe imagery tile rendering", () => {
   // =========================================================================
 
   describe("imagery layer removal", () => {
-    it("removes imagery layer when viewpoint is removed from state", async () => {
+    it("removes imagery layer when imagery overlay record is removed", async () => {
       const store = createTestStore();
       const vpData = makeViewpointData({
         jobId: "job-1",
@@ -395,6 +423,7 @@ describe("Globe imagery tile rendering", () => {
       });
 
       store.dispatch(setViewpointData(vpData));
+      addImageryOverlay(store, "job-1");
 
       const { useImageryTileEffect } =
         require("@/app/globe/useImageryTileEffect") as typeof import("@/app/globe/useImageryTileEffect");
@@ -416,8 +445,11 @@ describe("Globe imagery tile rendering", () => {
         1
       );
 
-      // Remove the viewpoint from state
+      // Removing the overlay record (production path: jobs-slice middleware
+      // does this when a job leaves the selection) should cause the hook to
+      // remove the corresponding Cesium imagery layer.
       await act(async () => {
+        store.dispatch(removeLayer("imagery-job-1"));
         store.dispatch(removeViewpointData({ jobId: "job-1" }));
         await new Promise((resolve) => setTimeout(resolve, 50));
       });
@@ -446,6 +478,7 @@ describe("Globe imagery tile rendering", () => {
       });
 
       store.dispatch(setViewpointData(vpData));
+      addImageryOverlay(store, "job-1");
 
       const { useImageryTileEffect } =
         require("@/app/globe/useImageryTileEffect") as typeof import("@/app/globe/useImageryTileEffect");
@@ -504,6 +537,7 @@ describe("Globe imagery tile rendering", () => {
       });
 
       store.dispatch(setViewpointData(vpData));
+      addImageryOverlay(store, "job-bounds");
 
       const { useImageryTileEffect } =
         require("@/app/globe/useImageryTileEffect") as typeof import("@/app/globe/useImageryTileEffect");

@@ -77,7 +77,6 @@ function makeDetectionLayer(
     id,
     name,
     source: "detection",
-    visible: true,
     zIndex: 1,
     featureCount,
     metadata: { layerType: "vector" }
@@ -140,7 +139,6 @@ describe("AnalyticsPanel", () => {
       id: "user-1",
       name: "User Layer",
       source: "user",
-      visible: true,
       zIndex: 1,
       featureCount: 5
     };

@@ -1,7 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 /**
  * Tests for layer-tools.ts.
- * Covers list, show/hide, toggle, group visibility, reorder, and style tools.
+ *
+ * The agent-facing tool surface mirrors the human sidebar surface:
+ * - list_overlay_layers        (read-only introspection)
+ * - set_job_visibility         (add/remove a job from the selection)
+ * - reorder_layers             (change draw order)
+ * - style_layer                (detection → jobs-slice per-job style;
+ *                               agent features → overlay-slice FeatureStyle)
  */
 
 import { configureStore } from "@reduxjs/toolkit";
@@ -9,39 +15,84 @@ import { configureStore } from "@reduxjs/toolkit";
 import {
   listLayersTool,
   reorderLayersTool,
-  setGroupVisibilityTool,
-  setLayerVisibilityTool,
-  styleLayerTool,
-  toggleLayerVisibilityTool
+  setJobVisibilityTool,
+  styleLayerTool
 } from "@/mcp/local-server/layer-tools";
+import { ImageProcessingJob } from "@/services/model-runner-service";
+import imageryReducer from "@/store/slices/imagery-slice";
+import jobsReducer, { fetchDataMiddleware } from "@/store/slices/jobs-slice";
 import overlayReducer, { addLayer } from "@/store/slices/overlay-slice";
 import settingsReducer from "@/store/slices/settings-slice";
+
+// Prevent real network calls from the middleware-triggered thunks
+jest.mock("@/services/data-catalog-service", () => ({
+  dataCatalogService: { searchItems: jest.fn(() => Promise.resolve({})) }
+}));
+jest.mock("@/services/s3-service", () => ({
+  s3Service: { downloadFile: jest.fn() }
+}));
+jest.mock("@/services/viewpoint-service", () => ({
+  viewpointService: {
+    getViewpoint: jest.fn(() => new Promise(() => {})),
+    getViewpointExtentWGS84: jest.fn()
+  }
+}));
+jest.mock("@/services/geojson-cache-service", () => {
+  const cache = {
+    has: jest.fn(() => false),
+    get: jest.fn(() => null),
+    set: jest.fn(),
+    delete: jest.fn()
+  };
+  return {
+    GeoJSONCacheService: {
+      getInstance: () => cache
+    }
+  };
+});
 
 const createStore = () =>
   configureStore({
     reducer: {
       overlay: overlayReducer,
-      settings: settingsReducer
-    }
+      settings: settingsReducer,
+      jobs: jobsReducer,
+      imagery: imageryReducer
+    },
+    middleware: (getDefaultMiddleware) =>
+      getDefaultMiddleware({
+        thunk: true,
+        serializableCheck: false
+      }).concat(fetchDataMiddleware)
   });
 
 function seedLayer(
   store: ReturnType<typeof createStore>,
   id: string,
-  opts: { source?: string; visible?: boolean; groupId?: string } = {}
+  opts: { source?: string; jobId?: string } = {}
 ) {
   store.dispatch(
     addLayer({
       id,
       name: `Layer ${id}`,
       source: (opts.source || "detection") as "detection",
-      visible: opts.visible ?? true,
       zIndex: 0,
       featureCount: 5,
-      metadata: opts.groupId ? { groupId: opts.groupId } : undefined
+      metadata: opts.jobId ? { jobId: opts.jobId } : undefined
     })
   );
 }
+
+function makeJob(jobId: string): ImageProcessingJob {
+  return {
+    job_id: jobId,
+    status: "SUCCESS",
+    updated_at: new Date().toISOString(),
+    job_name: `Job ${jobId}`
+  };
+}
+
+// ─── list_overlay_layers ──────────────────────────────────────────────────────
 
 describe("listLayersTool", () => {
   it("should return empty list when no layers exist", () => {
@@ -73,50 +124,95 @@ describe("listLayersTool", () => {
     };
     expect(result.layer_count).toBe(1);
   });
-
-  it("should filter by visible_only", () => {
-    const store = createStore();
-    seedLayer(store, "vis", { visible: true });
-    seedLayer(store, "hid", { visible: false });
-
-    const result = listLayersTool.handler({ visible_only: true }, store) as {
-      layer_count: number;
-    };
-    expect(result.layer_count).toBe(1);
-  });
 });
 
-describe("setLayerVisibilityTool", () => {
-  it("should set layer visibility", () => {
-    const store = createStore();
-    seedLayer(store, "layer-1", { visible: true });
+// ─── set_job_visibility ───────────────────────────────────────────────────────
 
-    const result = setLayerVisibilityTool.handler(
-      { layer_id: "layer-1", visible: false },
+describe("setJobVisibilityTool", () => {
+  /**
+   * Seed the jobs list so the tool can find the job to toggle.
+   */
+  function seedJob(
+    store: ReturnType<typeof createStore>,
+    job: ImageProcessingJob
+  ) {
+    store.dispatch({
+      type: "jobs/fetchJobs/fulfilled",
+      payload: { jobs: [job], isManualRefresh: false }
+    });
+  }
+
+  it("adds the job to selection when visible=true", () => {
+    const store = createStore();
+    const job = makeJob("j1");
+    seedJob(store, job);
+
+    const result = setJobVisibilityTool.handler(
+      { job_id: "j1", visible: true },
+      store
+    ) as { success: boolean; visible: boolean };
+
+    expect(result.success).toBe(true);
+    expect(result.visible).toBe(true);
+    expect(
+      store.getState().jobs.selection.selectedJobs.map((j) => j.job_id)
+    ).toContain("j1");
+  });
+
+  it("removes the job from selection when visible=false", () => {
+    const store = createStore();
+    const job = makeJob("j1");
+    seedJob(store, job);
+
+    // First select
+    setJobVisibilityTool.handler({ job_id: "j1", visible: true }, store);
+    // Then deselect
+    const result = setJobVisibilityTool.handler(
+      { job_id: "j1", visible: false },
       store
     ) as { success: boolean; visible: boolean };
 
     expect(result.success).toBe(true);
     expect(result.visible).toBe(false);
+    expect(
+      store.getState().jobs.selection.selectedJobs.map((j) => j.job_id)
+    ).not.toContain("j1");
   });
 
-  it("should return error for non-existent layer", () => {
+  it("is a no-op when the job is already in the requested state", () => {
     const store = createStore();
-    const result = setLayerVisibilityTool.handler(
-      { layer_id: "nope", visible: true },
+    const job = makeJob("j1");
+    seedJob(store, job);
+
+    // Job starts deselected; asking for visible=false should succeed as no-op
+    const result = setJobVisibilityTool.handler(
+      { job_id: "j1", visible: false },
+      store
+    ) as { success: boolean; message: string };
+
+    expect(result.success).toBe(true);
+    expect(result.message).toMatch(/already/);
+  });
+
+  it("errors for an unknown job_id", () => {
+    const store = createStore();
+
+    const result = setJobVisibilityTool.handler(
+      { job_id: "unknown", visible: true },
       store
     ) as { success: boolean; error: string };
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("not found");
+    expect(result.error).toMatch(/not found/i);
   });
 
-  it("should include auto_zoom_enabled in response", () => {
+  it("includes auto_zoom_enabled in the response", () => {
     const store = createStore();
-    seedLayer(store, "layer-1");
+    const job = makeJob("j1");
+    seedJob(store, job);
 
-    const result = setLayerVisibilityTool.handler(
-      { layer_id: "layer-1", visible: true },
+    const result = setJobVisibilityTool.handler(
+      { job_id: "j1", visible: true },
       store
     ) as { auto_zoom_enabled: boolean };
 
@@ -124,60 +220,10 @@ describe("setLayerVisibilityTool", () => {
   });
 });
 
-describe("toggleLayerVisibilityTool", () => {
-  it("should toggle from visible to hidden", () => {
-    const store = createStore();
-    seedLayer(store, "layer-1", { visible: true });
-
-    const result = toggleLayerVisibilityTool.handler(
-      { layer_id: "layer-1" },
-      store
-    ) as { visible: boolean };
-
-    expect(result.visible).toBe(false);
-  });
-
-  it("should toggle from hidden to visible", () => {
-    const store = createStore();
-    seedLayer(store, "layer-1", { visible: false });
-
-    const result = toggleLayerVisibilityTool.handler(
-      { layer_id: "layer-1" },
-      store
-    ) as { visible: boolean };
-
-    expect(result.visible).toBe(true);
-  });
-
-  it("should return error for non-existent layer", () => {
-    const store = createStore();
-    const result = toggleLayerVisibilityTool.handler(
-      { layer_id: "nope" },
-      store
-    ) as { success: boolean };
-
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("setGroupVisibilityTool", () => {
-  it("should set visibility for all layers in a group", () => {
-    const store = createStore();
-    seedLayer(store, "det-1", { groupId: "job-123", visible: true });
-    seedLayer(store, "det-2", { groupId: "job-123", visible: true });
-    seedLayer(store, "other", { groupId: "job-456", visible: true });
-
-    const result = setGroupVisibilityTool.handler(
-      { group_id: "job-123", visible: false },
-      store
-    ) as { affected_layers: number };
-
-    expect(result.affected_layers).toBe(2);
-  });
-});
+// ─── reorder_layers ───────────────────────────────────────────────────────────
 
 describe("reorderLayersTool", () => {
-  it("should reorder layers", () => {
+  it("reorders layers", () => {
     const store = createStore();
     seedLayer(store, "a");
     seedLayer(store, "b");
@@ -191,7 +237,7 @@ describe("reorderLayersTool", () => {
     expect(result.layer_order).toEqual(["b", "a"]);
   });
 
-  it("should return error for unknown layer IDs", () => {
+  it("errors for unknown layer IDs", () => {
     const store = createStore();
     seedLayer(store, "a");
 
@@ -205,34 +251,101 @@ describe("reorderLayersTool", () => {
   });
 });
 
+// ─── style_layer ──────────────────────────────────────────────────────────────
+
 describe("styleLayerTool", () => {
-  it("should apply style to a layer", () => {
+  it("updates jobs-slice per-job style for detection layers", () => {
     const store = createStore();
-    seedLayer(store, "layer-1");
+    seedLayer(store, "detection-job-1", { jobId: "job-1" });
 
     const result = styleLayerTool.handler(
-      { layer_id: "layer-1", color: "#ff0000", opacity: 0.5 },
+      { layer_id: "detection-job-1", color: "#ff0000", opacity: 0.5 },
       store
     ) as { success: boolean; applied_style: Record<string, unknown> };
 
     expect(result.success).toBe(true);
     expect(result.applied_style).toEqual({ color: "#ff0000", opacity: 0.5 });
+    expect(store.getState().jobs.selection.layerStyles["job-1"]).toEqual({
+      color: "#ff0000",
+      opacity: 0.5
+    });
   });
 
-  it("should return error when no style properties provided", () => {
+  it("preserves existing opacity when only color is provided for a detection layer with an existing style", () => {
     const store = createStore();
-    seedLayer(store, "layer-1");
+    seedLayer(store, "detection-job-2", { jobId: "job-2" });
+    // Seed an existing style via jobs-slice
+    store.dispatch({
+      type: "jobs/setLayerStyle",
+      payload: { jobId: "job-2", style: { color: "#00ff00", opacity: 0.7 } }
+    });
 
-    const result = styleLayerTool.handler({ layer_id: "layer-1" }, store) as {
-      success: boolean;
-      error: string;
-    };
+    const result = styleLayerTool.handler(
+      { layer_id: "detection-job-2", color: "#ff0000" },
+      store
+    ) as { success: boolean; applied_style: Record<string, unknown> };
+
+    expect(result.success).toBe(true);
+    expect(result.applied_style).toEqual({ color: "#ff0000", opacity: 0.7 });
+  });
+
+  it("errors when styling a detection layer with no existing style and incomplete args", () => {
+    const store = createStore();
+    seedLayer(store, "detection-job-3", { jobId: "job-3" });
+
+    const result = styleLayerTool.handler(
+      { layer_id: "detection-job-3", color: "#ff0000" },
+      store
+    ) as { success: boolean; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/existing style/i);
+  });
+
+  it("updates overlay FeatureStyle for non-detection layers", () => {
+    const store = createStore();
+    seedLayer(store, "agent-features", { source: "agent" });
+
+    const result = styleLayerTool.handler(
+      {
+        layer_id: "agent-features",
+        color: "#ff0000",
+        opacity: 0.5,
+        fill_color: "#00ff00",
+        weight: 2
+      },
+      store
+    ) as { success: boolean; applied_style: Record<string, unknown> };
+
+    expect(result.success).toBe(true);
+    expect(result.applied_style).toEqual({
+      color: "#ff0000",
+      opacity: 0.5,
+      fillColor: "#00ff00",
+      weight: 2
+    });
+    expect(store.getState().overlay.layers["agent-features"].style).toEqual({
+      color: "#ff0000",
+      opacity: 0.5,
+      fillColor: "#00ff00",
+      weight: 2
+    });
+  });
+
+  it("errors when no style properties are provided for a non-detection layer", () => {
+    const store = createStore();
+    seedLayer(store, "agent-features", { source: "agent" });
+
+    const result = styleLayerTool.handler(
+      { layer_id: "agent-features" },
+      store
+    ) as { success: boolean; error: string };
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("No style properties");
   });
 
-  it("should return error for non-existent layer", () => {
+  it("errors for a non-existent layer", () => {
     const store = createStore();
     const result = styleLayerTool.handler(
       { layer_id: "nope", color: "red" },

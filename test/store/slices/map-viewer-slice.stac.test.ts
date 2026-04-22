@@ -519,26 +519,34 @@ describe("Map Viewer Slice - STAC-based fetchGeoJSONData", () => {
    * Test: Skip if already loaded
    */
   describe("Caching", () => {
-    it("should skip fetching if data is already loaded", async () => {
+    it("should skip fetching if data is already in the cache", async () => {
       const job = createMockJob();
       const layerId = `detection-${job.job_id}`;
+
+      // Configure the mock cache to report a cached entry for this layer
+      mockCache.has.mockReturnValueOnce(true);
+      mockCache.get.mockReturnValueOnce({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [0, 0] },
+            properties: {}
+          },
+          {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [1, 1] },
+            properties: {}
+          }
+        ]
+      });
 
       const { dispatch } = createDispatchAndCollector();
       const getState = jest.fn(() =>
         createMockState(job, {
           overlay: {
-            layers: {
-              [layerId]: {
-                id: layerId,
-                name: `Detection: ${job.job_id}`,
-                source: "detection",
-                visible: true,
-                zIndex: 10,
-                featureCount: 5,
-                metadata: { jobId: job.job_id, loading: false }
-              }
-            },
-            layerOrder: [layerId],
+            layers: {},
+            layerOrder: [],
             inlineFeatures: {}
           }
         })
@@ -550,8 +558,27 @@ describe("Map Viewer Slice - STAC-based fetchGeoJSONData", () => {
         getState as unknown as () => RootState
       );
 
-      // Should not call searchItems since layer is already loaded
+      // Should not call searchItems since cached data is available
       expect(mockedSearchItems).not.toHaveBeenCalled();
+
+      // Should register the overlay layer directly from the cache, without
+      // a loading state (addLayer with loading: false).
+      const addLayerCalls = dispatch.mock.calls.filter(
+        (call) =>
+          typeof call[0] === "object" &&
+          call[0] !== null &&
+          (call[0] as { type?: string }).type === addLayer.type
+      );
+      expect(addLayerCalls.length).toBeGreaterThanOrEqual(1);
+      const addLayerPayload = (addLayerCalls[0][0] as { payload: unknown })
+        .payload as {
+        id: string;
+        featureCount: number;
+        metadata: { loading: boolean };
+      };
+      expect(addLayerPayload.id).toBe(layerId);
+      expect(addLayerPayload.featureCount).toBe(2);
+      expect(addLayerPayload.metadata.loading).toBe(false);
     });
   });
 });

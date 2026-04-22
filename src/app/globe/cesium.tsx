@@ -49,6 +49,10 @@ import { extractClassification } from "@/utils/analytics/extract-classification"
 import { extractConfidence } from "@/utils/analytics/extract-confidence";
 import { CLASSIFICATION_PALETTE } from "@/utils/analytics/types";
 import {
+  computeLoadedDetectionJobIds,
+  diffNewlyLoaded
+} from "@/utils/auto-zoom";
+import {
   calculateZoomFromExtent,
   cartesian3ToWGS84,
   extentToHeight,
@@ -439,7 +443,8 @@ export default function Cesium() {
     };
 
     // --- Render detection layers from overlay slice + GeoJSONCacheService ---
-    // Only render detection layers that are visible (controlled by sidebar toggle)
+    // Presence in overlay.layers = should render. The middleware manages
+    // overlay presence based on job selection; there is no visibility flag.
     const detectionLoadPromises: Array<{
       jobId: string;
       dataSource: GeoJsonDataSource;
@@ -448,7 +453,6 @@ export default function Cesium() {
     for (const layerId of stableLayerOrder) {
       const layer: OverlayLayer | undefined = stableOverlayLayers[layerId];
       if (!layer) continue;
-      if (!layer.visible) continue;
       if (layer.source !== "detection") continue;
       if (layer.metadata?.loading || layer.metadata?.error) continue;
 
@@ -542,24 +546,17 @@ export default function Cesium() {
       }
     }
 
-    // Fly to the most recently toggled-on detection layer
-    const currentVisibleJobIds = new Set<string>();
-    for (const layerId of stableLayerOrder) {
-      const layer = stableOverlayLayers[layerId];
-      if (
-        layer?.source === "detection" &&
-        layer.visible &&
-        layer.metadata?.jobId
-      ) {
-        currentVisibleJobIds.add(layer.metadata.jobId);
-      }
-    }
-    const newlyVisible: string[] = [];
-    currentVisibleJobIds.forEach((id) => {
-      if (!prevVisibleJobIdsRef.current.has(id)) {
-        newlyVisible.push(id);
-      }
-    });
+    // Auto-zoom should fire when a detection layer's data just finished
+    // loading — not when the loading-state layer record first appears.
+    // Track the set of jobs whose detection data is currently loaded and
+    // compute the "newly ready" diff against the previous render.
+    const currentVisibleJobIds =
+      computeLoadedDetectionJobIds(stableOverlayLayers);
+    const newlyVisibleSet = diffNewlyLoaded(
+      currentVisibleJobIds,
+      prevVisibleJobIdsRef.current
+    );
+    const newlyVisible: string[] = Array.from(newlyVisibleSet);
     prevVisibleJobIdsRef.current = currentVisibleJobIds;
 
     if (autoZoom && newlyVisible.length > 0) {

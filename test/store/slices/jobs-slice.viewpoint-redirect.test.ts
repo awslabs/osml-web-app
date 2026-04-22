@@ -217,10 +217,11 @@ describe("fetchViewpointStatus — imagery-slice redirect", () => {
 
   /**
    * Validates: Requirement 7.4
-   * When a job is deselected during polling, the thunk dispatches
-   * removeViewpointData to imagery-slice to clean up.
+   * When a job is deselected during polling, the thunk exits silently.
+   * (The jobs-slice middleware handles cleanup of overlay layers and
+   * viewpoint data when the selection shrinks — not the thunk itself.)
    */
-  it("dispatches removeViewpointData when job deselected during polling", async () => {
+  it("exits polling silently when job deselected", async () => {
     const viewpoint = makeViewpoint({ viewpoint_status: "CREATING" });
     mockGetViewpoint.mockResolvedValue(viewpoint);
 
@@ -232,18 +233,25 @@ describe("fetchViewpointStatus — imagery-slice redirect", () => {
     );
     await thunkPromise;
 
-    // The job is NOT in selectedJobs (empty by default), so when the
-    // timer fires, the thunk should detect deselection and clean up.
-    // Advance timers to trigger the scheduled poll callback
+    // Clear actions from the initial dispatch; we want to verify the
+    // timer callback alone.
+    dispatchedActions.length = 0;
+    mockGetViewpoint.mockClear();
+
+    // The job is NOT in selectedJobs — when the timer fires, the thunk
+    // should exit silently (no recursive self-dispatch, no getViewpoint
+    // call, no side-effect action).
     jest.advanceTimersByTime(5000);
-
-    // Allow any pending microtasks to resolve
     await Promise.resolve();
     await Promise.resolve();
 
+    // The thunk should not re-fetch the viewpoint
+    expect(mockGetViewpoint).not.toHaveBeenCalled();
+
+    // The thunk should not directly dispatch any cleanup action — the
+    // middleware owns that path, triggered by setSelectedJobs changes.
     const dispatchedTypes = dispatchedActions.map((a) => a.type);
-
-    // The thunk should dispatch imagery/removeViewpointData when the job is no longer selected
-    expect(dispatchedTypes).toContain("imagery/removeViewpointData");
+    expect(dispatchedTypes).not.toContain("imagery/removeViewpointData");
+    expect(dispatchedTypes).not.toContain("imagery/setViewpointData");
   });
 });

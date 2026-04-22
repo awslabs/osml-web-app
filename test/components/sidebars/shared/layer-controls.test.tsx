@@ -84,7 +84,10 @@ jest.mock("@/services/model-runner-service", () => ({
 jest.mock("@/services/job-management", () => ({
   fetchAllJobs: jest.fn().mockResolvedValue({ jobs: [], error: null }),
   deleteJob: jest.fn().mockResolvedValue({ success: true }),
-  isJobComplete: jest.fn((status: string) => status === "SUCCESS")
+  // Mirror the production terminal-status set: SUCCESS, PARTIAL, FAILED.
+  isJobComplete: jest.fn((status: string) =>
+    ["SUCCESS", "PARTIAL", "FAILED"].includes(status)
+  )
 }));
 
 // Track dispatched actions
@@ -102,9 +105,7 @@ jest.mock("@/store/slices/data-catalog-slice", () => ({
   fetchCollections: (...args: []) => mockFetchCollections(...args)
 }));
 
-// Mock fetchGeoJSONData and fetchViewpointStatus from jobs-slice (they're thunks)
-const mockFetchGeoJSONData = jest.fn();
-const mockFetchViewpointStatus = jest.fn();
+// Mock jobs-slice thunks that LayerControls invokes so tests don't make real calls.
 jest.mock("@/store/slices/jobs-slice", () => {
   const actual = jest.requireActual("@/store/slices/jobs-slice") as Record<
     string,
@@ -113,10 +114,6 @@ jest.mock("@/store/slices/jobs-slice", () => {
   return {
     __esModule: true,
     ...actual,
-    fetchGeoJSONData: (job: ImageProcessingJob) => () =>
-      mockFetchGeoJSONData(job),
-    fetchViewpointStatus: (jobId: string) => () =>
-      mockFetchViewpointStatus(jobId),
     startJobsPolling: () => () => {},
     stopJobsPolling: () => () => {}
   };
@@ -208,8 +205,6 @@ function renderWithStore(
 describe("LayerControls Component", () => {
   beforeEach(() => {
     dispatchedActions.length = 0;
-    mockFetchGeoJSONData.mockClear();
-    mockFetchViewpointStatus.mockClear();
     mockFetchCollections.mockClear();
   });
 
@@ -278,45 +273,6 @@ describe("LayerControls Component", () => {
   });
 
   /**
-   * Validates: Requirement 7.6
-   * THE LayerControls_Component SHALL auto-dispatch fetchGeoJSONData for all SUCCESS
-   * jobs that don't yet have a detection overlay layer (eager fetch pattern).
-   */
-  it("auto-dispatches fetchGeoJSONData for SUCCESS jobs without detection layers", async () => {
-    const jobs = [
-      makeJob("j1", "SUCCESS", "Completed Job"),
-      makeJob("j2", "IN_PROGRESS", "Running Job")
-    ];
-
-    const store = createMockStore({
-      jobsList: {
-        jobs,
-        customOrder: ["j1", "j2"],
-        isLoading: false,
-        isRefreshing: false,
-        error: null
-      }
-    });
-    // No overlay layers exist — j1 should trigger eager fetch
-
-    await act(() => {
-      renderWithStore(<LayerControls />, store);
-    });
-
-    await waitFor(() => {
-      // fetchGeoJSONData should have been called for j1 (SUCCESS, no layer)
-      expect(mockFetchGeoJSONData).toHaveBeenCalledWith(
-        expect.objectContaining({ job_id: "j1", status: "SUCCESS" })
-      );
-    });
-
-    // Should NOT have been called for j2 (IN_PROGRESS)
-    expect(mockFetchGeoJSONData).not.toHaveBeenCalledWith(
-      expect.objectContaining({ job_id: "j2" })
-    );
-  });
-
-  /**
    * Validates: Requirement 7.7
    * THE LayerControls_Component SHALL dispatch fetchCollections() when detection
    * data finishes loading for a job.
@@ -341,7 +297,6 @@ describe("LayerControls Component", () => {
             id: "detection-j1",
             name: "Detection: j1",
             source: "detection",
-            visible: true,
             zIndex: 10,
             featureCount: 0,
             metadata: { jobId: "j1", loading: true }
@@ -425,5 +380,199 @@ describe("LayerControls Component", () => {
     // fetchCollections is now called from confirmDelete after unwrap() resolves.
     // In this unit test we only verify the effect-based path is removed;
     // the confirmDelete callback path is covered by integration tests.
+  });
+
+  /**
+   * When a job transitions from an incomplete status (IN_PROGRESS, etc.)
+   * to a terminal status (SUCCESS / PARTIAL / FAILED), the component
+   * should schedule a delayed fetchCollections() so the STAC catalog
+   * reflects the newly indexed detections — even if the user never
+   * toggles the job visible.
+   */
+  it("dispatches fetchCollections after a job transitions to SUCCESS (delayed)", async () => {
+    jest.useFakeTimers();
+
+    const jobInProgress = makeJob("j1", "IN_PROGRESS", "Busy Job");
+    const store = createMockStore({
+      jobsList: {
+        jobs: [jobInProgress],
+        customOrder: ["j1"],
+        isLoading: false,
+        isRefreshing: false,
+        error: null
+      }
+    });
+
+    await act(() => {
+      renderWithStore(<LayerControls />, store);
+    });
+
+    mockFetchCollections.mockClear();
+
+    // Job transitions to SUCCESS.
+    act(() => {
+      store.dispatch({
+        type: "jobs/fetchJobs/fulfilled",
+        meta: { arg: {}, requestId: "t1" },
+        payload: {
+          jobs: [makeJob("j1", "SUCCESS", "Busy Job")],
+          isManualRefresh: false
+        }
+      });
+    });
+
+    // Refresh is delayed, so should NOT fire synchronously.
+    expect(mockFetchCollections).not.toHaveBeenCalled();
+
+    // Advance past the ingest delay (3 seconds).
+    act(() => {
+      jest.advanceTimersByTime(3100);
+    });
+
+    expect(mockFetchCollections).toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it("also refreshes on PARTIAL and FAILED terminal transitions", async () => {
+    jest.useFakeTimers();
+
+    const store = createMockStore({
+      jobsList: {
+        jobs: [
+          makeJob("j-partial", "IN_PROGRESS", "P"),
+          makeJob("j-failed", "IN_PROGRESS", "F")
+        ],
+        customOrder: ["j-partial", "j-failed"],
+        isLoading: false,
+        isRefreshing: false,
+        error: null
+      }
+    });
+
+    await act(() => {
+      renderWithStore(<LayerControls />, store);
+    });
+
+    mockFetchCollections.mockClear();
+
+    act(() => {
+      store.dispatch({
+        type: "jobs/fetchJobs/fulfilled",
+        meta: { arg: {}, requestId: "t1" },
+        payload: {
+          jobs: [
+            makeJob("j-partial", "PARTIAL", "P"),
+            makeJob("j-failed", "FAILED", "F")
+          ],
+          isManualRefresh: false
+        }
+      });
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(3100);
+    });
+
+    // Multiple transitions observed in the same render coalesce into a
+    // single delayed dispatch.
+    expect(mockFetchCollections).toHaveBeenCalledTimes(1);
+
+    jest.useRealTimers();
+  });
+
+  it("does NOT refresh for jobs that were already terminal on mount", async () => {
+    jest.useFakeTimers();
+
+    // Initial render: the job is already SUCCESS — no transition to
+    // observe.
+    const store = createMockStore({
+      jobsList: {
+        jobs: [makeJob("j1", "SUCCESS", "Already done")],
+        customOrder: ["j1"],
+        isLoading: false,
+        isRefreshing: false,
+        error: null
+      }
+    });
+
+    await act(() => {
+      renderWithStore(<LayerControls />, store);
+    });
+
+    mockFetchCollections.mockClear();
+
+    act(() => {
+      jest.advanceTimersByTime(3100);
+    });
+
+    expect(mockFetchCollections).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it("coalesces multiple transitions within the delay window into a single refresh", async () => {
+    jest.useFakeTimers();
+
+    const store = createMockStore({
+      jobsList: {
+        jobs: [
+          makeJob("a", "IN_PROGRESS", "A"),
+          makeJob("b", "IN_PROGRESS", "B")
+        ],
+        customOrder: ["a", "b"],
+        isLoading: false,
+        isRefreshing: false,
+        error: null
+      }
+    });
+
+    await act(() => {
+      renderWithStore(<LayerControls />, store);
+    });
+
+    mockFetchCollections.mockClear();
+
+    // First transition: job "a" completes.
+    act(() => {
+      store.dispatch({
+        type: "jobs/fetchJobs/fulfilled",
+        meta: { arg: {}, requestId: "t1" },
+        payload: {
+          jobs: [
+            makeJob("a", "SUCCESS", "A"),
+            makeJob("b", "IN_PROGRESS", "B")
+          ],
+          isManualRefresh: false
+        }
+      });
+    });
+
+    // Advance partway — not yet at the delay boundary.
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    // Second transition: job "b" completes.
+    act(() => {
+      store.dispatch({
+        type: "jobs/fetchJobs/fulfilled",
+        meta: { arg: {}, requestId: "t2" },
+        payload: {
+          jobs: [makeJob("a", "SUCCESS", "A"), makeJob("b", "SUCCESS", "B")],
+          isManualRefresh: false
+        }
+      });
+    });
+
+    // The pending timer should have been reset. Advance a full delay from
+    // now — the first (reset) timer will fire exactly once.
+    act(() => {
+      jest.advanceTimersByTime(3100);
+    });
+
+    expect(mockFetchCollections).toHaveBeenCalledTimes(1);
+
+    jest.useRealTimers();
   });
 });

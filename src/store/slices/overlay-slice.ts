@@ -23,17 +23,22 @@ export type LayerType = "vector" | "imagery";
 export interface LayerMetadata {
   jobId?: string;
   collectionId?: string;
-  groupId?: string;
   loading?: boolean;
   error?: string;
   layerType?: LayerType;
 }
 
+/**
+ * A realized overlay layer record that both the map and globe views render.
+ *
+ * Presence in `OverlayState.layers` means the layer should be rendered.
+ * There is no `visible` flag: selection (for job-bound layers) or
+ * explicit add/remove (for agent features) controls rendering.
+ */
 export interface OverlayLayer {
   id: string;
   name: string;
   source: LayerSource;
-  visible: boolean;
   zIndex: number;
   style?: FeatureStyle;
   featureCount: number;
@@ -125,35 +130,6 @@ export const overlaySlice = createSlice({
       }
     },
 
-    setLayerVisibility: (
-      state,
-      action: PayloadAction<{ layerId: string; visible: boolean }>
-    ) => {
-      const { layerId, visible } = action.payload;
-      if (state.layers[layerId]) {
-        state.layers[layerId].visible = visible;
-      }
-    },
-
-    toggleLayerVisibility: (state, action: PayloadAction<string>) => {
-      const layerId = action.payload;
-      if (state.layers[layerId]) {
-        state.layers[layerId].visible = !state.layers[layerId].visible;
-      }
-    },
-
-    setGroupVisibility: (
-      state,
-      action: PayloadAction<{ groupId: string; visible: boolean }>
-    ) => {
-      const { groupId, visible } = action.payload;
-      Object.values(state.layers).forEach((layer) => {
-        if (layer.metadata?.groupId === groupId) {
-          layer.visible = visible;
-        }
-      });
-    },
-
     setLayerOrder: (state, action: PayloadAction<string[]>) => {
       state.layerOrder = action.payload;
     },
@@ -185,7 +161,6 @@ export const overlaySlice = createSlice({
           id: AGENT_LAYER_ID,
           name: "Agent Features",
           source: "agent",
-          visible: true,
           zIndex: 100,
           featureCount: 0
         };
@@ -279,9 +254,6 @@ export const {
   addLayer,
   removeLayer,
   updateLayerMetadata,
-  setLayerVisibility,
-  toggleLayerVisibility,
-  setGroupVisibility,
   setLayerOrder,
   setLayerStyle,
   addFeature,
