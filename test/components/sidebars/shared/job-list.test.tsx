@@ -257,7 +257,6 @@ describe("JobList Component", () => {
             id: "detection-j1",
             name: "Detection: j1",
             source: "detection",
-            visible: true,
             zIndex: 10,
             featureCount: 5,
             metadata: { jobId: "j1", loading: false }
@@ -266,7 +265,6 @@ describe("JobList Component", () => {
             id: "detection-j2",
             name: "Detection: j2",
             source: "detection",
-            visible: true,
             zIndex: 10,
             featureCount: 3,
             metadata: { jobId: "j2", loading: false }
@@ -281,12 +279,20 @@ describe("JobList Component", () => {
     renderWithStore(<JobList />, store);
 
     // Click on Job One to select it
-    const jobOneElement = screen.getByText("Job One");
-    fireEvent.click(jobOneElement);
+    fireEvent.click(screen.getByText("Job One"));
 
-    // After clicking, the store should have j1 in selectedJobs
-    const state = store.getState();
-    expect(state.jobs.selection.selectedJobs.length).toBeGreaterThanOrEqual(0);
+    // After the first click, j1 should be in selection
+    let state = store.getState();
+    expect(state.jobs.selection.selectedJobs.map((j) => j.job_id)).toContain(
+      "j1"
+    );
+
+    // Click again to deselect
+    fireEvent.click(screen.getByText("Job One"));
+    state = store.getState();
+    expect(
+      state.jobs.selection.selectedJobs.map((j) => j.job_id)
+    ).not.toContain("j1");
   });
 
   /**
@@ -374,7 +380,6 @@ describe("JobList Component", () => {
             id: "detection-j1",
             name: "Detection: j1",
             source: "detection",
-            visible: true,
             zIndex: 10,
             featureCount: 5,
             metadata: { jobId: "j1", loading: false }

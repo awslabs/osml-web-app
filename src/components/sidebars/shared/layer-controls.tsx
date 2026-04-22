@@ -15,20 +15,26 @@ import React, {
 import { CreateIcon } from "@/components/icons";
 import { CreateJobModal } from "@/components/modals/create-image-job-modal";
 import { DeleteConfirmationModal } from "@/components/modals/delete-confirmation-modal";
+import { isJobComplete } from "@/services/job-management";
 import { ImageProcessingJob } from "@/services/model-runner-service";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchCollections } from "@/store/slices/data-catalog-slice";
 import {
   deleteJob,
-  fetchGeoJSONData,
   fetchJobs,
-  fetchViewpointStatus,
   selectHasIncompleteJobs,
   selectJobs,
   selectJobsRefreshing,
   startJobsPolling,
   stopJobsPolling
 } from "@/store/slices/jobs-slice";
+
+/**
+ * Delay between observing a job's completion and refreshing the STAC
+ * catalog. Gives the catalog ingest pipeline a moment to index the newly
+ * produced detection items so the collection counts reflect reality.
+ */
+const STAC_INGEST_REFRESH_DELAY_MS = 3000;
 
 export const LayerControls = ({ children }: { children?: ReactNode }) => {
   const dispatch = useAppDispatch();
@@ -61,31 +67,10 @@ export const LayerControls = ({ children }: { children?: ReactNode }) => {
     };
   }, [hasIncompleteJobs, dispatch]);
 
-  // Eager detection fetch: auto-dispatch fetchGeoJSONData for SUCCESS jobs
-  // without a detection overlay layer. Use a ref to prevent re-dispatch loops.
-  const fetchingJobsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    jobs.forEach((job) => {
-      if (
-        job.status === "SUCCESS" &&
-        !fetchingJobsRef.current.has(job.job_id)
-      ) {
-        const layerId = `detection-${job.job_id}`;
-        const layer = overlayLayers[layerId];
-        if (
-          !layer ||
-          (layer.metadata?.loading === false && layer.metadata?.error)
-        ) {
-          fetchingJobsRef.current.add(job.job_id);
-          dispatch(fetchGeoJSONData(job));
-          dispatch(fetchViewpointStatus(job.job_id));
-        }
-      }
-    });
-  }, [jobs, overlayLayers, dispatch]);
-
-  // Collection refresh: dispatch fetchCollections() when detection data
-  // finishes loading (loading transitions from true to false without error).
+  // Collection refresh: dispatch fetchCollections() when a job's detection
+  // data finishes loading (the overlay layer transitions from loading to
+  // loaded without error). This keeps the STAC catalog collection item
+  // counts in sync with newly indexed detections.
   const refreshedCollectionsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     let shouldRefresh = false;
@@ -106,6 +91,63 @@ export const LayerControls = ({ children }: { children?: ReactNode }) => {
       dispatch(fetchCollections());
     }
   }, [jobs, overlayLayers, dispatch]);
+
+  // Collection refresh on job completion: when a job transitions to a
+  // terminal status (SUCCESS / PARTIAL / FAILED), refresh the STAC
+  // collections after a brief delay so the catalog has time to index the
+  // job's detection items. This keeps the catalog item counts up to date
+  // even if the user never toggles the job's layers visible.
+  //
+  // Tracked per-job to detect the transition rather than the initial
+  // status on mount, and coalesced into a single timer so a batch of
+  // jobs completing around the same time triggers exactly one refresh.
+  const previousJobStatusesRef = useRef<Map<string, string>>(new Map());
+  const pendingCatalogRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  useEffect(() => {
+    const previousStatuses = previousJobStatusesRef.current;
+    let transitionObserved = false;
+
+    jobs.forEach((job) => {
+      const prevStatus = previousStatuses.get(job.job_id);
+      const currStatus = job.status;
+
+      // Only fire on an observed transition from non-terminal to terminal.
+      // Jobs we've never seen before are seeded below without triggering,
+      // so existing completed jobs on initial page load don't spam the
+      // refresh.
+      if (
+        prevStatus !== undefined &&
+        !isJobComplete(prevStatus) &&
+        isJobComplete(currStatus)
+      ) {
+        transitionObserved = true;
+      }
+      previousStatuses.set(job.job_id, currStatus);
+    });
+
+    if (transitionObserved) {
+      if (pendingCatalogRefreshRef.current) {
+        clearTimeout(pendingCatalogRefreshRef.current);
+      }
+      pendingCatalogRefreshRef.current = setTimeout(() => {
+        pendingCatalogRefreshRef.current = null;
+        dispatch(fetchCollections());
+      }, STAC_INGEST_REFRESH_DELAY_MS);
+    }
+  }, [jobs, dispatch]);
+
+  // Cleanup pending catalog refresh on unmount so we don't dispatch after
+  // the component is gone.
+  useEffect(() => {
+    return () => {
+      if (pendingCatalogRefreshRef.current) {
+        clearTimeout(pendingCatalogRefreshRef.current);
+        pendingCatalogRefreshRef.current = null;
+      }
+    };
+  }, []);
 
   // Manual refresh
   const handleManualRefresh = useCallback(() => {

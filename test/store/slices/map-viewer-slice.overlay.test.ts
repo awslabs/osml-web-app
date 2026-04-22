@@ -314,52 +314,64 @@ describe("fetchGeoJSONData — overlay-slice routing", () => {
     ).toContain("may still be processing");
   });
 
-  it("should clean up layer and cache when job deleted during poll", async () => {
+  it("should exit silently when job is deselected during poll (middleware owns cleanup)", async () => {
     const job = createMockJob();
+    // searchItems keeps returning no matching features so the thunk stays
+    // in its polling loop.
     mockedSearchItems.mockResolvedValue({
       type: "FeatureCollection",
       features: []
     });
-    let callCount = 0;
-    const getState = jest.fn(() => {
-      callCount++;
-      return callCount > 1
-        ? createMockState(job, {
-            jobs: { selectedJobs: [] },
-            overlay: {},
-            jobsList: { jobs: [], customOrder: [] }
-          })
-        : createMockState(job);
-    });
+    // The selection is empty from the start — when the poll loop does its
+    // "still selected?" check after the first interval, it will exit.
+    const getState = jest.fn(() =>
+      createMockState(job, { jobs: { selectedJobs: [] } })
+    );
     const { dispatch, dispatched } = createDispatchAndCollector();
     const p = fetchGeoJSONData(job)(
       dispatch as unknown as AppDispatch,
       getState as unknown as () => RootState
     );
+    // Advance past the first poll interval so the selection check fires.
     await jest.advanceTimersByTimeAsync(DETECTION_POLL_INTERVAL);
     await p;
-    expect(
-      dispatched.filter((a) => a.type === removeLayer.type).length
-    ).toBeGreaterThanOrEqual(1);
-    expect(mockCache.delete).toHaveBeenCalledWith(`detection-${job.job_id}`);
+
+    // Under the current architecture the thunk does NOT dispatch removeLayer
+    // or clear the cache itself when the job leaves the selection — the
+    // jobs-slice middleware owns that path. The thunk simply stops polling.
+    expect(dispatched.filter((a) => a.type === removeLayer.type).length).toBe(
+      0
+    );
+    expect(mockCache.delete).not.toHaveBeenCalled();
+
+    // Initial searchItems + addLayer still happened (the thunk runs its
+    // first STAC query before checking selection).
+    expect(mockedSearchItems).toHaveBeenCalled();
   });
 
-  it("should skip re-fetch for already-loaded layers", async () => {
+  it("should skip re-fetch when data is already in the cache", async () => {
     const job = createMockJob();
     const layerId = `detection-${job.job_id}`;
-    const { dispatch } = createDispatchAndCollector();
+
+    // Configure the cache mock to report a cached entry
+    mockCache.has.mockReturnValueOnce(true);
+    mockCache.get.mockReturnValueOnce({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [0, 0] },
+          properties: {}
+        }
+      ]
+    });
+
+    const { dispatch, dispatched } = createDispatchAndCollector();
     const getState = jest.fn(() =>
       createMockState(job, {
         overlay: {
-          layers: {
-            [layerId]: {
-              id: layerId,
-              source: "detection",
-              featureCount: 5,
-              metadata: { jobId: job.job_id, loading: false }
-            }
-          },
-          layerOrder: [layerId],
+          layers: {},
+          layerOrder: [],
           inlineFeatures: {}
         }
       })
@@ -369,9 +381,17 @@ describe("fetchGeoJSONData — overlay-slice routing", () => {
       getState as unknown as () => RootState
     );
     expect(mockedSearchItems).not.toHaveBeenCalled();
+
+    // Still registers the overlay layer from the cached data, in a loaded
+    // (non-loading) state.
+    const addLayerActions = dispatched.filter((a) => a.type === addLayer.type);
+    expect(addLayerActions.length).toBe(1);
+    const payload = addLayerActions[0].payload as OverlayActionPayload;
+    expect(payload.id).toBe(layerId);
+    expect(payload.metadata?.loading).toBe(false);
   });
 
-  it("should trigger eager fetch for SUCCESS jobs regardless of selection", async () => {
+  it("should complete the initial fetch even if the job is not in the selection (middleware gates entry)", async () => {
     const job = createMockJob();
     mockedSearchItems.mockResolvedValue({
       type: "FeatureCollection",
@@ -391,6 +411,9 @@ describe("fetchGeoJSONData — overlay-slice routing", () => {
         createMockState(job, { jobs: { selectedJobs: [] } })
       ) as unknown as () => RootState
     );
+    // The selection check only fires during the polling loop; when STAC
+    // returns results on the first call the thunk completes and writes to
+    // the cache + dispatches addLayer, even if selection was empty.
     expect(
       dispatched.filter((a) => a.type === addLayer.type).length
     ).toBeGreaterThanOrEqual(1);

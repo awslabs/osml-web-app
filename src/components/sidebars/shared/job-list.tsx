@@ -43,13 +43,12 @@ import {
   selectJobsError,
   selectJobsLoading,
   selectLayerStyles,
+  selectSelectedJobs,
   setJobsCustomOrder,
-  setLayerStyle
+  setLayerStyle,
+  setSelectedJobs
 } from "@/store/slices/jobs-slice.ts";
-import {
-  setGroupVisibility,
-  setLayerOrder
-} from "@/store/slices/overlay-slice.ts";
+import { setLayerOrder } from "@/store/slices/overlay-slice.ts";
 
 // ─── ColorControls Sub-Component ─────────────────────────────────────────────
 
@@ -303,6 +302,7 @@ export const JobList = () => {
   const customOrder = useAppSelector(selectJobsCustomOrder);
   const isLoading = useAppSelector(selectJobsLoading);
   const error = useAppSelector(selectJobsError);
+  const selectedJobs = useAppSelector(selectSelectedJobs);
   const overlayLayers = useAppSelector((state) => state.overlay.layers);
 
   // DnD sensors
@@ -326,14 +326,24 @@ export const JobList = () => {
     }
   };
 
+  /**
+   * Toggle whether a job is selected. Selection is the source of truth for
+   * "this job's detection and imagery should be rendered on the map/globe";
+   * the fetchDataMiddleware reacts to selection changes by creating or
+   * tearing down the corresponding overlay layers.
+   */
   const handleJobSelection = (jobId: string, disabledKeys: string[]) => {
-    if (!disabledKeys.includes(jobId)) {
-      const layerId = `detection-${jobId}`;
-      const groupId = `job-${jobId}`;
-      const currentlyVisible = overlayLayers[layerId]?.visible ?? false;
-      // Toggle all layers in the group (detection + imagery) together
-      dispatch(setGroupVisibility({ groupId, visible: !currentlyVisible }));
-    }
+    if (disabledKeys.includes(jobId)) return;
+
+    const job = jobs.find((j) => j.job_id === jobId);
+    if (!job) return;
+
+    const isCurrentlySelected = selectedJobs.some((j) => j.job_id === jobId);
+    const nextSelection = isCurrentlySelected
+      ? selectedJobs.filter((j) => j.job_id !== jobId)
+      : [...selectedJobs, job];
+
+    dispatch(setSelectedJobs(nextSelection));
   };
 
   const handleDeleteJob = (jobId: string) => {
@@ -377,16 +387,22 @@ export const JobList = () => {
     return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
   });
 
+  // Disable jobs that aren't in a selectable state:
+  //   - Non-SUCCESS jobs (still processing or failed)
+  //   - SUCCESS jobs whose detection overlay layer is currently loading
+  //     (middleware will auto-register it once selected; disabled here only
+  //     when a prior selection left the layer in a loading state)
   const disabledKeys = sortedJobs
     .filter((job) => {
       if (job.status !== "SUCCESS") return true;
-      // Disable SUCCESS jobs while detection data is still loading
       const layerId = `detection-${job.job_id}`;
       const layer = overlayLayers[layerId];
-      if (!layer || layer.metadata?.loading) return true;
+      if (layer && layer.metadata?.loading) return true;
       return false;
     })
     .map((job) => job.job_id);
+
+  const selectedIds = new Set(selectedJobs.map((j) => j.job_id));
 
   return (
     <DndContext
@@ -402,7 +418,13 @@ export const JobList = () => {
           {sortedJobs.map((job) => {
             const layerId = `detection-${job.job_id}`;
             const layer = overlayLayers[layerId];
+            const isSelected = selectedIds.has(job.job_id);
+            // A job is "cataloging" when it's selected (user asked to see
+            // it) and the detection layer is still loading. If the layer
+            // simply doesn't exist, the job isn't selected yet — no
+            // spinner needed.
             const isCataloging =
+              isSelected &&
               job.status === "SUCCESS" &&
               (!layer || layer.metadata?.loading === true);
             const hasCatalogError =
@@ -426,7 +448,7 @@ export const JobList = () => {
                   disabled={disabledKeys.includes(job.job_id)}
                   hasCatalogError={hasCatalogError}
                   isCataloging={isCataloging}
-                  isSelected={layer?.visible === true}
+                  isSelected={isSelected}
                   job={job}
                   onDelete={handleDeleteJob}
                 />

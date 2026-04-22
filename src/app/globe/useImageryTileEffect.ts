@@ -4,9 +4,11 @@
  *
  * Subscribes to state.imagery.viewpointData and state.overlay.layers,
  * and manages ImageryLayer instances on the Cesium viewer for each READY
- * viewpoint whose detection layer is visible.
+ * viewpoint that has a corresponding imagery overlay layer record.
  *
- * Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7
+ * Presence of an `imagery-<jobId>` entry in overlay.layers is the sole
+ * rendering signal — the jobs-slice middleware adds the overlay record
+ * when a job is selected and removes it on deselection/deletion.
  */
 
 import {
@@ -26,10 +28,11 @@ import { fetchBearerToken } from "@/utils/cesium-tile-auth";
 /**
  * Synchronises Cesium ImageryLayer instances with the Redux imagery state.
  *
- * For each READY viewpoint that has a WGS-84 extent AND whose detection
- * layer is visible, the hook creates a UrlTemplateImageryProvider backed
- * by an authenticated tile URL and adds it to the viewer. When the
- * detection layer is hidden, the corresponding imagery layer is removed.
+ * For each READY viewpoint that has a WGS-84 extent AND a corresponding
+ * imagery overlay record, the hook creates a UrlTemplateImageryProvider
+ * backed by an authenticated tile URL and adds it to the viewer. When the
+ * overlay record is removed (via job deselection/deletion), the tile layer
+ * is removed from the viewer.
  */
 export function useImageryTileEffect(viewer: CesiumViewer | null): void {
   const viewpointData = useAppSelector(selectViewpointData);
@@ -43,7 +46,8 @@ export function useImageryTileEffect(viewer: CesiumViewer | null): void {
     let cancelled = false;
 
     // Determine which job IDs are currently renderable:
-    // viewpoint must be READY with extent AND its detection layer must be visible
+    // viewpoint must be READY with extent AND an imagery overlay record
+    // must exist (selection drives overlay presence via the middleware)
     const renderableJobIds: Set<string> = new Set();
     Object.entries(viewpointData).forEach(([jobId, vp]) => {
       if (
@@ -53,11 +57,11 @@ export function useImageryTileEffect(viewer: CesiumViewer | null): void {
       ) {
         return;
       }
-      // Check if the imagery layer for this job is visible
+      // Only render if the imagery layer is present in overlay.layers.
+      // Presence is the sole rendering signal; there is no visibility flag.
       const imageryLayerId = `imagery-${jobId}`;
-      const imageryLayer = overlayLayers[imageryLayerId];
-      if (imageryLayer && !imageryLayer.visible) {
-        return; // Imagery layer exists but is hidden
+      if (!overlayLayers[imageryLayerId]) {
+        return;
       }
       renderableJobIds.add(jobId);
     });

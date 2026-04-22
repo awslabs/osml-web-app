@@ -19,10 +19,8 @@ import {
 import {
   listLayersTool,
   reorderLayersTool,
-  setGroupVisibilityTool,
-  setLayerVisibilityTool,
-  styleLayerTool,
-  toggleLayerVisibilityTool
+  setJobVisibilityTool,
+  styleLayerTool
 } from "./layer-tools";
 import {
   deleteImageProcessingJobTool,
@@ -58,9 +56,7 @@ export const LOCAL_TOOLS: LocalMcpTool[] = [
   deleteImageProcessingJobTool,
   // Layer management tools
   listLayersTool,
-  setLayerVisibilityTool,
-  toggleLayerVisibilityTool,
-  setGroupVisibilityTool,
+  setJobVisibilityTool,
   reorderLayersTool,
   styleLayerTool,
   // Analytics tools

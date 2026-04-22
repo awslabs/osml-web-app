@@ -38,16 +38,15 @@ export const AnalyticsPanel: React.FC = () => {
     (state: RootState) => state.analytics.activeFilters
   );
 
-  // Only show visible detection GeoJSON layers (not imagery tile layers)
+  // Only show detection GeoJSON layers (not imagery tile layers).
+  // Presence in overlay.layers = the layer is currently rendered; the
+  // jobs-slice middleware removes entries on deselection/deletion.
   const detectionLayers: OverlayLayer[] = useMemo(() => {
     return layerOrder
       .map((id) => layers[id])
       .filter(
         (l): l is OverlayLayer =>
-          !!l &&
-          l.source === "detection" &&
-          l.metadata?.layerType === "vector" &&
-          l.visible
+          !!l && l.source === "detection" && l.metadata?.layerType === "vector"
       );
   }, [layers, layerOrder]);
 

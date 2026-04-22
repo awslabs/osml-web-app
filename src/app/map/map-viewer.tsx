@@ -45,6 +45,10 @@ import { extractClassification } from "@/utils/analytics/extract-classification"
 import { extractConfidence } from "@/utils/analytics/extract-confidence";
 import { CLASSIFICATION_PALETTE } from "@/utils/analytics/types";
 import {
+  computeLoadedDetectionJobIds,
+  diffNewlyLoaded
+} from "@/utils/auto-zoom";
+import {
   webMercatorExtentToWGS84,
   webMercatorToWGS84,
   wgs84ExtentToWebMercator,
@@ -323,23 +327,24 @@ export default function MapViewer() {
 
     const cache = GeoJSONCacheService.getInstance();
 
-    // Compute visible job IDs from BOTH detection and imagery overlay layers
+    // Compute the set of job IDs with at least one overlay record present.
+    // Each per-layer branch inside the loop below applies its own readiness
+    // checks (detection.loading, viewpointEntry.loaded, etc.).
     const visibleJobIds = new Set<string>();
     for (const [, layer] of Object.entries(overlayLayers)) {
       if (
         (layer.source === "detection" || layer.id.startsWith("imagery-")) &&
-        layer.visible &&
         layer.metadata?.jobId
       ) {
         visibleJobIds.add(layer.metadata.jobId);
       }
     }
 
-    // --- Imagery layers: add/remove based on overlay visibility ---
-    // Remove imagery layers for jobs that are no longer visible
+    // --- Imagery layers: add/remove based on overlay presence ---
+    // Remove imagery layers for jobs whose overlay record is gone
     Array.from(imageryLayers.current.keys()).forEach((jobId) => {
-      const imageryVisible = overlayLayers[`imagery-${jobId}`]?.visible;
-      if (!imageryVisible) {
+      const imageryPresent = !!overlayLayers[`imagery-${jobId}`];
+      if (!imageryPresent) {
         const layer = imageryLayers.current.get(jobId);
         if (layer) {
           mapInstance.current?.removeLayer(layer);
@@ -348,10 +353,10 @@ export default function MapViewer() {
       }
     });
 
-    // Remove detection layers for jobs that are no longer visible
+    // Remove detection layers for jobs whose overlay record is gone
     Array.from(detectionLayers.current.keys()).forEach((jobId) => {
-      const detectionVisible = overlayLayers[`detection-${jobId}`]?.visible;
-      if (!detectionVisible) {
+      const detectionPresent = !!overlayLayers[`detection-${jobId}`];
+      if (!detectionPresent) {
         const layer = detectionLayers.current.get(jobId);
         if (layer) {
           mapInstance.current?.removeLayer(layer);
@@ -360,7 +365,7 @@ export default function MapViewer() {
       }
     });
 
-    // Add or update layers for visible jobs
+    // Add or update layers for jobs present in the overlay
     visibleJobIds.forEach((jobId) => {
       const detectionLayerId = `detection-${jobId}`;
       const imageryLayerId = `imagery-${jobId}`;
@@ -376,9 +381,11 @@ export default function MapViewer() {
         status: "SUCCESS"
       };
 
-      // Handle imagery tile layer from viewpoint
+      // Handle imagery tile layer from viewpoint.
+      // Presence of `imageryOverlay` in overlay.layers is the sole rendering
+      // signal — the middleware removes the overlay record on deselection.
       if (
-        imageryOverlay?.visible &&
+        imageryOverlay &&
         viewpointEntry?.loaded &&
         viewpointEntry.viewpoint.viewpoint_status === "READY" &&
         viewpointEntry.extent !== undefined &&
@@ -413,10 +420,10 @@ export default function MapViewer() {
         mapInstance.current?.addLayer(imageLayer);
       }
 
-      // Handle detection GeoJSON layer — read from GeoJSONCacheService
-      if (detectionOverlay?.visible) {
+      // Handle detection GeoJSON layer — read from GeoJSONCacheService.
+      // Presence of `detectionOverlay` in overlay.layers = should render.
+      if (detectionOverlay) {
         const isLoaded =
-          detectionOverlay &&
           !detectionOverlay.metadata?.loading &&
           !detectionOverlay.metadata?.error;
         if (isLoaded && cachedData) {
@@ -523,14 +530,16 @@ export default function MapViewer() {
       }
     });
 
-    // Fly to the most recently toggled-on job
-    const newlyVisible = new Set<string>();
-    visibleJobIds.forEach((id) => {
-      if (!prevVisibleJobIdsRef.current.has(id)) {
-        newlyVisible.add(id);
-      }
-    });
-    prevVisibleJobIdsRef.current = visibleJobIds;
+    // Auto-zoom should fire when a detection layer just became loaded —
+    // not when it first appears in a loading state. Track the set of jobs
+    // whose detection data is currently loaded; the diff against this is
+    // what "newly ready" means.
+    const loadedDetectionJobIds = computeLoadedDetectionJobIds(overlayLayers);
+    const newlyVisible = diffNewlyLoaded(
+      loadedDetectionJobIds,
+      prevVisibleJobIdsRef.current
+    );
+    prevVisibleJobIdsRef.current = loadedDetectionJobIds;
 
     if (autoZoom && newlyVisible.size > 0) {
       // Zoom to the last newly visible job

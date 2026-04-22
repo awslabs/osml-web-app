@@ -31,7 +31,6 @@ import {
   setSelectedJobs,
   VectorStyle
 } from "@/store/slices/jobs-slice";
-import { setGroupVisibility } from "@/store/slices/overlay-slice";
 import { setViewport } from "@/store/slices/viewport-slice";
 import { AppDispatch, RootState } from "@/store/store";
 
@@ -815,14 +814,6 @@ export const displayDetectionResultsTool: LocalMcpTool = {
       if (detectionLayer?.featureCount) {
         featureCount = detectionLayer.featureCount;
       }
-
-      // Ensure the detection overlay layer is visible
-      store.dispatch(
-        setGroupVisibility({
-          groupId: `job-${job_id}`,
-          visible: true
-        })
-      );
 
       return {
         success: true,
