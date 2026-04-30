@@ -12,10 +12,12 @@ import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { LambdaSubscription } from "aws-cdk-lib/aws-sns-subscriptions";
 import { Queue } from "aws-cdk-lib/aws-sqs";
+import { NagSuppressions } from "cdk-nag";
 import { Construct } from "constructs";
 import { join } from "path";
 
 import { ModelRunnerApiConfig } from "../config/app-config";
+import { WafConfig } from "../config/app-config";
 import { AuthorizedRestApi } from "./authorized-rest-api";
 import { AuthConfig } from "./authorizer-function";
 
@@ -57,6 +59,11 @@ export interface ModelRunnerApiProps {
    * - ["https://domain.com", "https://other.com"]: Specific origins only
    */
   corsAllowedOrigins?: string[];
+
+  /**
+   * WAFv2 configuration for the REST API stage (optional).
+   */
+  wafConfig?: WafConfig;
 }
 
 export class ModelRunnerApiConstruct extends Construct {
@@ -76,7 +83,13 @@ export class ModelRunnerApiConstruct extends Construct {
       partitionKey: { name: "job_id", type: AttributeType.STRING },
       billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: this.removalPolicy,
-      timeToLiveAttribute: "ttl"
+      timeToLiveAttribute: "ttl",
+      // Enable point-in-time recovery so the jobs table can be restored to
+      // any second within the last 35 days if an operator or client wipes
+      // data unintentionally.
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true
+      }
     });
 
     this.jobsTable.addGlobalSecondaryIndex({
@@ -160,6 +173,21 @@ export class ModelRunnerApiConstruct extends Construct {
       logGroup: apiLogGroup
     });
 
+    // The Lambda runtime is pinned to Python 3.13 because the bundled
+    // dependency stack (pydantic-core 2.23.4, compiled via PyO3 0.22) does
+    // not yet support Python 3.14: building the layer on python3.14 fails
+    // with "the configured Python interpreter version (3.14) is newer than
+    // PyO3's maximum supported version (3.13)". Bumping pydantic-core to a
+    // PyO3-0.23-based release is a dependency-tree change outside the scope
+    // of this construct, and 3.13 remains an AWS-supported Lambda runtime.
+    NagSuppressions.addResourceSuppressions(apiFunction, [
+      {
+        id: "AwsSolutions-L1",
+        reason:
+          "This Lambda is pinned to python3.13 because its bundled dependency stack (pydantic-core 2.23.4 compiled through PyO3 0.22) does not support python3.14 — the layer build fails when PyO3 refuses to target an interpreter newer than 3.13. Upgrading the dependency set to a PyO3 0.23 release is an API-contract change outside the scope of this construct, and python3.13 remains an AWS-supported Lambda runtime."
+      }
+    ]);
+
     const statusMonitorLogGroup = new LogGroup(
       this,
       "MRApiStatusMonitorLogGroup",
@@ -188,6 +216,17 @@ export class ModelRunnerApiConstruct extends Construct {
       logGroup: statusMonitorLogGroup
     });
 
+    // Same PyO3/pydantic-core constraint as the MRApi function above keeps
+    // the status monitor on python3.13. The two functions share the deployed
+    // lambda source tree and would need to upgrade together.
+    NagSuppressions.addResourceSuppressions(statusMonitorFunction, [
+      {
+        id: "AwsSolutions-L1",
+        reason:
+          "This Lambda is pinned to python3.13 because it shares a code base and dependency set with the Model Runner API function. The pydantic-core 2.23.4 wheel used by that code cannot be built against python3.14 (PyO3 0.22 does not support it), so both functions must move in lockstep when the dependency tree is upgraded; python3.13 remains an AWS-supported Lambda runtime."
+      }
+    ]);
+
     // Subscribe to SNS topic
     modelRunnerTopic.addSubscription(
       new LambdaSubscription(statusMonitorFunction)
@@ -209,7 +248,9 @@ export class ModelRunnerApiConstruct extends Construct {
       vpcSubnets: props.vpcSubnets,
       hostedZone: this.config.hostedZone,
       domainName: this.config.domainName,
-      corsAllowedOrigins: props.corsAllowedOrigins
+      corsAllowedOrigins: props.corsAllowedOrigins,
+      wafConfig: props.wafConfig,
+      wafNamePrefix: `${props.projectName}-modelrunner-api`
     });
 
     this.api = this.authorizedRestApi.restApi;
@@ -251,6 +292,70 @@ export class ModelRunnerApiConstruct extends Construct {
     apiFunction.addToRolePolicy(cloudWatchPolicy);
     apiFunction.addToRolePolicy(vpcPolicy);
     statusMonitorFunction.addToRolePolicy(cloudWatchPolicy);
+
+    // The API Lambda role carries a small set of wildcards that cannot be
+    // tightened without breaking the runtime contract with the job record:
+    //   - `dynamodb:Query` on the table's GSIs uses `/index/*` because the
+    //     construct fans out Query calls across every index that serves an
+    //     API endpoint; individual index ARNs are intentionally not known
+    //     to the policy layer.
+    //   - `s3:ListBucket` + `s3:DeleteObject` use `Resource: *` because the
+    //     bucket that stores a job's outputs is read from the job record at
+    //     request time and can change per job.
+    //   - `logs:*` uses `arn:aws:logs:*:*:*` so the function can create and
+    //     write to its own log group regardless of region/account; this is
+    //     the standard shape published by AWS for Lambda CloudWatch Logs
+    //     permissions.
+    NagSuppressions.addResourceSuppressions(
+      apiRole,
+      [
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "Query against the jobs table is intentionally fanned out across all Global Secondary Indexes that serve API endpoints. The /index/* suffix matches only indexes of this specific table, so the blast radius of the wildcard is constrained to the table's own index ARNs.",
+          appliesTo: [
+            "Resource::<ModelRunnerApiMRApiJobsTableFE43AAD8.Arn>/index/*"
+          ]
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "The Model Runner API deletes job output objects from the S3 bucket identified by the job record at request time. The bucket name is not known at synth time because it varies per job and per tenant, so s3:ListBucket and s3:DeleteObject are granted with a wildcard resource. The action set is narrowly limited to listing and deleting objects.",
+          appliesTo: ["Resource::*"]
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "CloudWatch Logs permissions use arn:aws:logs:*:*:* because the Lambda creates and writes to its own log group at invocation time, and the CreateLogGroup/CreateLogStream/PutLogEvents action set is the standard AWS-recommended grant for Lambda logging.",
+          appliesTo: ["Resource::arn:aws:logs:*:*:*"]
+        }
+      ],
+      true
+    );
+
+    // The status monitor Lambda role has the same GSI and logs wildcards as
+    // the API role, suppressed here with the same rationale scoped to the
+    // status monitor's default policy.
+    NagSuppressions.addResourceSuppressions(
+      statusMonitorRole,
+      [
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "The status monitor updates job records via the jobs table's Global Secondary Indexes. The /index/* suffix is constrained to indexes of this specific table, so the wildcard only matches index ARNs belonging to the jobs table itself.",
+          appliesTo: [
+            "Resource::<ModelRunnerApiMRApiJobsTableFE43AAD8.Arn>/index/*"
+          ]
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "CloudWatch Logs permissions use arn:aws:logs:*:*:* because the status monitor Lambda creates and writes to its own log group at invocation time. The action set is limited to CreateLogGroup/CreateLogStream/PutLogEvents, which is the standard AWS-recommended grant for Lambda logging.",
+          appliesTo: ["Resource::arn:aws:logs:*:*:*"]
+        }
+      ],
+      true
+    );
   }
 
   private setup(props: ModelRunnerApiProps): void {

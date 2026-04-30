@@ -12,6 +12,8 @@
 /cdk/bin/deployment/deployment.json
 /cdk/lib/constructs/layer/*
 !/cdk/lib/constructs/layer/.gitkeep
+/cdk/cdk-nag-suppressions-report.txt
+/cdk/.cdk-nag-suppressions-temp.json
 
 # testing
 /coverage
@@ -54,6 +56,12 @@ __pycache__/
 .hypothesis/
 .coverage
 htmlcov/
+.mypy_cache/
+.pytest_cache/
+
+# ASH (Automated Security Helper) local run outputs
+.ash/ash_output/
+.ash/*_out.txt
 
 # cdk build output
 cdk/dist/

@@ -90,7 +90,7 @@ describe("MapViewer", () => {
         latitude: 20,
         zoom: 8,
         extent: { west: 9, south: 19, east: 11, north: 21 },
-        updatedBy: "user"
+        updatedBy: "map"
       })
     );
 

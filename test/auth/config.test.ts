@@ -253,10 +253,12 @@ describe("auth/config", () => {
         newSession: undefined
       } as never);
 
-      expect((result as Record<string, unknown>).accessToken).toBe(
+      expect((result as unknown as Record<string, unknown>).accessToken).toBe(
         "session-token"
       );
-      expect((result as Record<string, unknown>).error).toBe("SomeError");
+      expect((result as unknown as Record<string, unknown>).error).toBe(
+        "SomeError"
+      );
     });
 
     it("should pass user info from token to session", () => {
@@ -271,7 +273,7 @@ describe("auth/config", () => {
         newSession: undefined
       } as never);
 
-      expect((result as Record<string, unknown>).user).toEqual(user);
+      expect((result as unknown as Record<string, unknown>).user).toEqual(user);
     });
   });
 
@@ -308,7 +310,7 @@ describe("auth/config", () => {
   // -----------------------------------------------------------------------
   describe("provider profile mapping", () => {
     it("should extract id, name, email from OIDC profile", () => {
-      const provider = authOptions.providers[0] as {
+      const provider = authOptions.providers[0] as unknown as {
         profile: (p: Record<string, string>) => {
           id: string;
           name: string;

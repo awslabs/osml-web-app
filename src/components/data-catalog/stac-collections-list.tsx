@@ -32,15 +32,16 @@ export const StacCollectionsList = ({
   const {
     data: collections,
     loading: isLoading,
-    error
+    error,
+    hasLoaded
   } = useAppSelector(selectCollections);
 
   // Initial load
   useEffect(() => {
-    if (collections.length === 0 && !isLoading) {
+    if (!hasLoaded && !isLoading) {
       dispatch(fetchCollections());
     }
-  }, [dispatch, collections.length, isLoading]);
+  }, [dispatch, hasLoaded, isLoading]);
 
   const handleRefresh = () => {
     dispatch(fetchCollections());

@@ -41,6 +41,7 @@ interface CollectionsState {
   data: StacCollection[];
   loading: boolean;
   error: string | null;
+  hasLoaded: boolean;
 }
 
 interface DataCatalogState {
@@ -64,7 +65,8 @@ const initialState: DataCatalogState = {
   collections: {
     data: [],
     loading: false,
-    error: null
+    error: null,
+    hasLoaded: false
   },
   search: {
     filters: {
@@ -345,11 +347,13 @@ export const dataCatalogSlice = createSlice({
         state.collections.loading = false;
         state.collections.data = action.payload;
         state.collections.error = null;
+        state.collections.hasLoaded = true;
       })
       .addCase(fetchCollections.rejected, (state, action) => {
         state.collections.loading = false;
         state.collections.error =
           action.error.message || "Failed to load collections";
+        state.collections.hasLoaded = true;
       })
       // Search STAC Items
       .addCase(searchStacItems.pending, (state) => {

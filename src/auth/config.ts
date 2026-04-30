@@ -41,8 +41,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       body: new URLSearchParams({
         client_id: clientId,
         grant_type: "refresh_token",
-        refresh_token: token.refreshToken as string,
-        resource: clientId
+        refresh_token: token.refreshToken as string
       }),
       method: "POST"
     });
@@ -81,8 +80,7 @@ export const authOptions: AuthOptions = {
       clientId: process.env.NEXTAUTH_CLIENT_ID,
       authorization: {
         params: {
-          scope: "openid profile email offline_access",
-          resource: process.env.NEXTAUTH_CLIENT_ID
+          scope: "openid profile email offline_access"
         }
       },
       idToken: true,

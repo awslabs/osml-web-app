@@ -1131,4 +1131,12 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Local development entry point only. In deployed environments this
+    # FastAPI app runs inside AWS Lambda via Mangum, so this block never
+    # executes in production. Default to 127.0.0.1 so a developer running
+    # `python app.py` doesn't accidentally bind to all interfaces; HOST /
+    # PORT env vars remain available for intentional overrides (e.g.,
+    # container-local dev where binding to 0.0.0.0 is required).
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)

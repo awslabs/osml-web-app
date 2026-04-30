@@ -7,6 +7,7 @@ import { Vpc } from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
 
 import { ModelRunnerApiConfig } from "./config/app-config";
+import { WafConfig } from "./config/app-config";
 import { AuthConfig } from "./constructs/authorizer-function";
 import { ModelRunnerApiConstruct } from "./constructs/model-runner-api-construct";
 
@@ -43,6 +44,11 @@ export interface ModelRunnerApiStackProps extends StackProps {
    * - ["https://domain.com", "https://other.com"]: Specific origins only
    */
   corsAllowedOrigins?: string[];
+
+  /**
+   * WAFv2 configuration for the REST API (optional).
+   */
+  wafConfig?: WafConfig;
 }
 
 export class ModelRunnerApiStack extends Stack {
@@ -66,7 +72,8 @@ export class ModelRunnerApiStack extends Stack {
       projectName: props.projectName,
       config: props.config,
       auth: props.auth,
-      corsAllowedOrigins: props.corsAllowedOrigins
+      corsAllowedOrigins: props.corsAllowedOrigins,
+      wafConfig: props.wafConfig
     });
   }
 }

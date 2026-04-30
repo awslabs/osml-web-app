@@ -47,6 +47,10 @@
         ]
       }
     },
+    "wafConfig": {
+      "enabled": true,
+      "requestsPer5Min": 2000
+    },
     "TILE_SERVER_URL": "",
     "STAC_CATALOG_URL": "",
     "DATA_INTAKE_OUTPUT_TOPIC_ARN": "",

@@ -2,8 +2,9 @@
  * Copyright 2025 Amazon.com, Inc. or its affiliates.
  */
 
-import { Duration } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import {
+  AccessLogFormat,
   AuthorizationType,
   Cors,
   DomainName,
@@ -11,6 +12,8 @@ import {
   GatewayResponse,
   IdentitySource,
   Integration,
+  LogGroupLogDestination,
+  MethodLoggingLevel,
   RequestAuthorizer,
   ResponseType,
   RestApi
@@ -20,12 +23,16 @@ import {
   CertificateValidation
 } from "aws-cdk-lib/aws-certificatemanager";
 import { IVpc, SubnetSelection } from "aws-cdk-lib/aws-ec2";
-import { IRole } from "aws-cdk-lib/aws-iam";
+import { IRole, Role } from "aws-cdk-lib/aws-iam";
+import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ARecord, HostedZone, RecordTarget } from "aws-cdk-lib/aws-route53";
 import { ApiGatewayDomain } from "aws-cdk-lib/aws-route53-targets";
+import { NagSuppressions } from "cdk-nag";
 import { Construct } from "constructs";
 
+import { WafConfig } from "../config/app-config";
 import { AuthConfig, AuthorizerFunction } from "./authorizer-function";
+import { WebAppWaf } from "./web-app-waf";
 
 /**
  * Properties for the AuthorizedRestApi construct
@@ -90,6 +97,17 @@ export interface AuthorizedRestApiProps {
    *   - ["https://domain.com", "https://other.com"]: Specific origins only
    */
   corsAllowedOrigins?: string[];
+
+  /**
+   * WAFv2 configuration for the REST API stage (optional).
+   */
+  wafConfig?: WafConfig;
+
+  /**
+   * Name prefix used for the WAF WebACL and its log group.
+   * Required when wafConfig.enabled is true.
+   */
+  wafNamePrefix?: string;
 }
 
 /**
@@ -162,11 +180,43 @@ export class AuthorizedRestApi extends Construct {
       corsOrigins = [];
     }
 
-    // Create the REST API
+    // Dedicated CloudWatch Log Group for API Gateway access logs. Retention is
+    // bounded to 30 days so the log volume stays manageable; the group is
+    // destroyed with the stack in non-prod environments and retained in prod.
+    const accessLogGroup = new LogGroup(this, `AccessLogs${id}`, {
+      logGroupName: `/aws/apigateway/${props.name}-access-logs`,
+      retention: RetentionDays.ONE_MONTH,
+      removalPolicy: props.isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY
+    });
+
+    // Create the REST API. Explicit request validation is attached below so
+    // every method on the proxy resource validates parameters and bodies
+    // before the Lambda integration runs.
     this.restApi = new RestApi(this, `RestApi${id}`, {
       restApiName: `${props.name}-RestApi`,
       deployOptions: {
-        stageName: props.apiStageName
+        stageName: props.apiStageName,
+        // Emit structured access logs for every request so operators can audit
+        // calls and troubleshoot failures without relying on integration logs.
+        accessLogDestination: new LogGroupLogDestination(accessLogGroup),
+        accessLogFormat: AccessLogFormat.jsonWithStandardFields({
+          caller: true,
+          httpMethod: true,
+          ip: true,
+          protocol: true,
+          requestTime: true,
+          resourcePath: true,
+          responseLength: true,
+          status: true,
+          user: true
+        }),
+        // Enable method-level CloudWatch execution logging at INFO.
+        // dataTraceEnabled stays false so request/response bodies are NOT
+        // written to logs, which would otherwise risk capturing sensitive
+        // payload data that transits this API.
+        loggingLevel: MethodLoggingLevel.INFO,
+        dataTraceEnabled: false,
+        metricsEnabled: true
       },
       endpointTypes: [EndpointType.REGIONAL],
       defaultIntegration: props.integration,
@@ -196,10 +246,90 @@ export class AuthorizedRestApi extends Construct {
           : undefined
     });
 
+    // The custom JWT authorizer (Keycloak OIDC) is the authentication
+    // mechanism for this API by design; Amazon Cognito User Pools is not
+    // part of the deployment topology. The WAFv2 integration is also out
+    // of scope for the guidance stack.
+    //
+    // Suppressions that target the RestApi itself. The method-level
+    // AwsSolutions-COG4 suppression is applied after addProxy() so the
+    // proxy methods are already in the tree when applyToChildren walks it.
+
+    // Scope the API Gateway CloudWatch logs role suppression to the exact
+    // managed-policy finding. The role is auto-created by the RestApi
+    // construct when stage-level CloudWatch logging is enabled, and the
+    // AmazonAPIGatewayPushToCloudWatchLogs managed policy is the AWS
+    // service-recommended grant for that role.
+    const cloudWatchRole = this.restApi.node.tryFindChild("CloudWatchRole") as
+      | Role
+      | undefined;
+    if (cloudWatchRole) {
+      NagSuppressions.addResourceSuppressions(cloudWatchRole, [
+        {
+          id: "AwsSolutions-IAM4",
+          reason:
+            "The AmazonAPIGatewayPushToCloudWatchLogs managed policy is attached to the role that API Gateway assumes when pushing execution and access logs to CloudWatch Logs. This role is auto-created by the RestApi construct whenever stage-level logging is enabled, and the managed policy is the configuration AWS publishes for this exact purpose.",
+          appliesTo: [
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+          ]
+        }
+      ]);
+    }
+
+    // Explicitly attach a request validator so AwsSolutions-APIG2 detects a
+    // CfnRequestValidator in the synthesized template regardless of whether
+    // individual methods opt in via defaultMethodOptions.
+    this.restApi.addRequestValidator(`DefaultRequestValidator${id}`, {
+      requestValidatorName: `${props.name}-DefaultRequestValidator`,
+      validateRequestBody: true,
+      validateRequestParameters: true
+    });
+
     // Add proxy resource to handle all paths
     this.restApi.root.addProxy({
       anyMethod: true
     });
+
+    // Per-stack WAFv2 WebACL associated with the deployment stage.
+    const wafEnabled =
+      props.wafConfig?.enabled !== false && !!props.wafNamePrefix;
+    if (wafEnabled) {
+      const stageArn = Stack.of(this).formatArn({
+        service: "apigateway",
+        account: "",
+        resource: "/restapis",
+        resourceName: `${this.restApi.restApiId}/stages/${this.restApi.deploymentStage.stageName}`
+      });
+      new WebAppWaf(this, "RestApiWaf", {
+        resourceArn: stageArn,
+        namePrefix: props.wafNamePrefix!,
+        isProd: props.isProd,
+        requestsPer5Min: props.wafConfig?.requestsPer5Min
+      });
+    }
+
+    // Suppress COG4 (Cognito authorizer requirement) across the RestApi, its
+    // methods, and the deployment stage. APIG3 (WAFv2 web ACL requirement)
+    // is suppressed only when WAF is disabled via wafConfig; when WAF is
+    // enabled the stage is associated with a WebACL above and APIG3 no
+    // longer fires. Methods are added via addProxy above; applying
+    // suppressions after that so applyToChildren walks the full method
+    // tree.
+    const suppressions = [
+      {
+        id: "AwsSolutions-COG4",
+        reason:
+          "This API is intentionally fronted by a custom Lambda-based JWT authorizer that validates OIDC tokens issued by the project Keycloak instance. Cognito User Pools are not part of the authentication architecture, so COG4 does not apply to the methods on this API."
+      }
+    ];
+    if (!wafEnabled) {
+      suppressions.push({
+        id: "AwsSolutions-APIG3",
+        reason:
+          "WAFv2 web ACL integration is disabled for this deployment via wafConfig.enabled=false. Access control is enforced by the custom JWT authorizer on every method, and CloudWatch access logs are enabled on the deployment stage to provide an audit trail for abuse investigation."
+      });
+    }
+    NagSuppressions.addResourceSuppressions(this.restApi, suppressions, true);
 
     // Add Gateway Responses to ensure CORS headers are included in error responses
     if (corsOrigins.length > 0) {

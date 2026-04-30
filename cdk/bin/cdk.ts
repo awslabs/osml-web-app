@@ -11,6 +11,7 @@ import { App } from "aws-cdk-lib";
 import {
   BedrockModelsConfig,
   ModelRunnerApiConfig,
+  WafConfig,
   WebAppUtilityConfig
 } from "../lib/config/app-config";
 import type { ConfigType } from "../lib/config/base-config";
@@ -89,6 +90,11 @@ const webAppDomainName =
     ? `osml.${deploymentConfig.dataplaneConfig.DOMAIN_HOSTED_ZONE_NAME}`
     : undefined);
 
+// Map dataplaneConfig to WafConfig (defaults: enabled=true, 2000 req/5min)
+const wafConfig = new WafConfig(
+  (deploymentConfig.dataplaneConfig?.wafConfig as ConfigType | undefined) ?? {}
+);
+
 // Deploy Model Runner API Stack
 const modelRunnerApiStack = new ModelRunnerApiStack(
   app,
@@ -103,7 +109,8 @@ const modelRunnerApiStack = new ModelRunnerApiStack(
     auth: authConfig,
     corsAllowedOrigins: webAppDomainName
       ? [`https://${webAppDomainName}`]
-      : undefined
+      : undefined,
+    wafConfig: wafConfig
   }
 );
 
@@ -123,7 +130,8 @@ const webAppUtilityApiStack = new WebAppUtilityStack(
     auth: authConfig,
     corsAllowedOrigins: webAppDomainName
       ? [`https://${webAppDomainName}`]
-      : undefined
+      : undefined,
+    wafConfig: wafConfig
   }
 );
 
@@ -193,7 +201,8 @@ const stacLoaderStack = new StacLoaderStack(app, `${projectName}-StacLoader`, {
   dataCatalogBaseUrl: deploymentConfig.dataplaneConfig?.STAC_CATALOG_URL,
   domainHostedZoneId: deploymentConfig.dataplaneConfig?.DOMAIN_HOSTED_ZONE_ID,
   domainHostedZoneName:
-    deploymentConfig.dataplaneConfig?.DOMAIN_HOSTED_ZONE_NAME
+    deploymentConfig.dataplaneConfig?.DOMAIN_HOSTED_ZONE_NAME,
+  wafConfig: wafConfig
 });
 
 // Update dynamic config with STAC loader MCP URL
@@ -224,7 +233,8 @@ const webAppStack = new WebAppStack(app, `${projectName}-WebApp`, {
   isProd: isProd,
   account: deploymentConfig.account,
   projectName: projectName,
-  config: dynamicWebAppConfig
+  config: dynamicWebAppConfig,
+  wafConfig: wafConfig
 });
 
 // Explicit dependencies ensure API stacks deploy first

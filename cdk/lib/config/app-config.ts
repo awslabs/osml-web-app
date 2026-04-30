@@ -63,6 +63,23 @@ export class BedrockModelsConfig extends BaseConfig {
   }
 }
 
+export class WafConfig extends BaseConfig {
+  /** Whether per-stack WAFv2 WebACLs are created and associated. @default true */
+  public enabled?: boolean;
+  /** Per-IP rate limit within a 5-minute sliding window. @default 2000 */
+  public requestsPer5Min?: number;
+
+  constructor(config: ConfigType = {}) {
+    super(config);
+    if (this.enabled === undefined) {
+      this.enabled = true;
+    }
+    if (this.requestsPer5Min === undefined) {
+      this.requestsPer5Min = 2000;
+    }
+  }
+}
+
 export class WebAppUtilityConfig extends BaseConfig {
   public restrictBucketAccess!: boolean;
   public allowedBucketArns?: string[];

@@ -30,8 +30,8 @@ repos:
         types: [file, python]
 
   # Security scanning (manual)
-  - repo: https://github.com/aws-samples/automated-security-helper
-    rev: 'v3.0.0'
+  - repo: https://github.com/awslabs/automated-security-helper
+    rev: 'v3.5.2'
     hooks:
       - id: ash
         stages: [manual]
@@ -76,6 +76,7 @@ repos:
             .+\.tsbuildinfo$|
             .+\.example$|
             .+\.gitkeep$|
+            .*\.dockerignore$|
             .*/node_modules/.*|
             .*/cdk\.out/.*|
             .*/coverage/.*|
@@ -107,7 +108,19 @@ repos:
         name: ESLint
         entry: bash -c 'npx eslint --fix --max-warnings 0'
         language: system
-        files: ^(src|cdk)/.*\.(ts|tsx|js)$
+        files: ^(src|cdk|test)/.*\.(ts|tsx|js)$
+        types: [file]
+        pass_filenames: false
+
+      # TypeScript typecheck for the web app (src/ + test/).
+      # Uses pass_filenames: false because tsc --noEmit reads tsconfig.json
+      # include globs directly and must typecheck the whole project graph,
+      # not just staged files.
+      - id: typecheck
+        name: TypeScript typecheck
+        entry: bash -c 'npx tsc --noEmit'
+        language: system
+        files: ^(src|test)/.*\.(ts|tsx)$
         types: [file]
         pass_filenames: false
 
@@ -139,12 +152,39 @@ repos:
         exclude: node_modules/
         pass_filenames: false
 
-      # Python Lambda tests (uses tox to create proper conda environment)
-      - id: lambda-pytest
-        name: Lambda pytest
+      # Python Lambda tests (one hook per lambda, scoped by path)
+      - id: web-app-utility-pytest
+        name: webAppUtility pytest
         entry: bash -c 'cd cdk/lambda/webAppUtility && tox'
         language: system
-        files: ^cdk/lambda/.*\.py$
+        files: ^cdk/lambda/webAppUtility/.*\.py$
         types: [file, python]
-        exclude: ^cdk/lambda/.*/(\.tox|__pycache__|\.pytest_cache)/
+        exclude: ^cdk/lambda/webAppUtility/(\.tox|__pycache__|\.pytest_cache|htmlcov|conda)/
+        pass_filenames: false
+
+      - id: stac-loader-pytest
+        name: stacLoader pytest
+        entry: bash -c 'cd cdk/lambda/stacLoader && tox'
+        language: system
+        files: ^cdk/lambda/stacLoader/.*\.py$
+        types: [file, python]
+        exclude: ^cdk/lambda/stacLoader/(\.tox|__pycache__|\.pytest_cache|htmlcov|conda)/
+        pass_filenames: false
+
+      - id: detection-bridge-translator-pytest
+        name: detectionBridgeTranslator pytest
+        entry: bash -c 'cd cdk/lambda/detectionBridgeTranslator && tox'
+        language: system
+        files: ^cdk/lambda/detectionBridgeTranslator/.*\.py$
+        types: [file, python]
+        exclude: ^cdk/lambda/detectionBridgeTranslator/(\.tox|__pycache__|\.pytest_cache|htmlcov)/
+        pass_filenames: false
+
+      - id: quota-codes-generator-pytest
+        name: quotaCodesGenerator pytest
+        entry: bash -c 'cd cdk/lambda/quotaCodesGenerator && tox'
+        language: system
+        files: ^cdk/lambda/quotaCodesGenerator/.*\.py$
+        types: [file, python]
+        exclude: ^cdk/lambda/quotaCodesGenerator/(\.tox|__pycache__|\.pytest_cache|htmlcov)/
         pass_filenames: false

@@ -1,0 +1,54 @@
+# Paths excluded from ASH (Automated Security Helper) scans.
+# ASH discovers this file via get_scan_set.py and applies it as a pathspec
+# before any scanner runs, so excluded paths never reach individual scanners.
+#
+# Syntax is gitignore-style, using **/dirname/** form to unambiguously match
+# files inside the directory at any depth. Keep this list aligned with
+# build-output and third-party directories.
+
+# Dependencies
+**/node_modules/**
+**/.pnp/**
+.pnp.js
+
+# Build output
+**/.next/**
+**/out/**
+**/build/**
+**/dist/**
+build.zip
+
+# CDK
+**/cdk.out/**
+
+# Test / coverage / type-check caches
+**/coverage/**
+**/htmlcov/**
+**/.tox/**
+**/.hypothesis/**
+**/.mypy_cache/**
+**/.pytest_cache/**
+**/__pycache__/**
+
+# Compiled Python
+**/*.py[cod]
+**/*$py.class
+
+# TypeScript build info
+**/*.tsbuildinfo
+
+# ASH internal outputs and logs (scanning our own scan artifacts is noise)
+.ash/ash_output/**
+.ash/analyze_out.txt
+.ash/scan_out.txt
+.ash/validate_out.txt
+
+# Vendored static assets
+# NOTE: igittigitt's IgnoreParser is invoked by ASH's get_scan_set.py with
+# base_path="/", which anchors non-** patterns to the filesystem root. Patterns
+# without a leading **/ therefore only match /public/cesium/... (literal root)
+# and never match the actual repo path (/home/.../lib/osml-web-app/public/...).
+# Always prefix directory exclusions with **/ unless you really mean "from repo
+# root on disk".
+**/public/cesium/**
+**/public/.ignored_cesium/**

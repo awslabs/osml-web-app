@@ -50,12 +50,14 @@ describe("isWebGLSupported", () => {
 
 describe("isWebGLSupported - branch coverage", () => {
   it("should return false when WebGLRenderingContext is undefined", () => {
-    const original = (window as Record<string, unknown>).WebGLRenderingContext;
-    delete (window as Record<string, unknown>).WebGLRenderingContext;
+    const original = (window as unknown as Record<string, unknown>)
+      .WebGLRenderingContext;
+    delete (window as unknown as Record<string, unknown>).WebGLRenderingContext;
 
     expect(isWebGLSupported()).toBe(false);
 
-    (window as Record<string, unknown>).WebGLRenderingContext = original;
+    (window as unknown as Record<string, unknown>).WebGLRenderingContext =
+      original;
   });
 
   it("should return false when getContext throws", () => {
@@ -79,7 +81,8 @@ describe("isWebGLSupported - branch coverage", () => {
   it("should return true when webgl context is available", () => {
     const mockContext = {};
     const originalCreateElement = document.createElement.bind(document);
-    (window as Record<string, unknown>).WebGLRenderingContext = function () {};
+    (window as unknown as Record<string, unknown>).WebGLRenderingContext =
+      function () {};
 
     jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
       if (tag === "canvas") {
@@ -98,7 +101,8 @@ describe("isWebGLSupported - branch coverage", () => {
   it("should fall back to experimental-webgl", () => {
     const mockContext = {};
     const originalCreateElement = document.createElement.bind(document);
-    (window as Record<string, unknown>).WebGLRenderingContext = function () {};
+    (window as unknown as Record<string, unknown>).WebGLRenderingContext =
+      function () {};
 
     jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
       if (tag === "canvas") {

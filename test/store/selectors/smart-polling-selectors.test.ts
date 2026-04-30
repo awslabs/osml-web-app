@@ -5,8 +5,6 @@
  * and quota usage.
  */
 
-import { configureStore } from "@reduxjs/toolkit";
-
 import {
   POLLING_INTERVALS,
   selectIsChatWidgetVisible,
@@ -16,42 +14,31 @@ import {
   selectUIContext,
   selectUserActivityLevel
 } from "@/store/selectors/smart-polling-selectors";
-import bedrockModelReducer from "@/store/slices/bedrock-model-slice";
-import bedrockQuotaReducer, {
+import {
   setPollingConfig,
   updateQuota
 } from "@/store/slices/bedrock-quota-slice";
-import chatSessionReducer, {
-  updateUserActivity
-} from "@/store/slices/chat-session-slice";
-import navbarReducer, {
+import { updateUserActivity } from "@/store/slices/chat-session-slice";
+import {
   setChatWidgetExpanded,
   setCurrentRoute
 } from "@/store/slices/navbar-slice";
+
+import { createTestStore } from "../../test-utils";
 
 jest.mock("@/services/bedrock-service", () => ({
   bedrockModelsService: { getAvailableModels: jest.fn() }
 }));
 
-const createStore = () =>
-  configureStore({
-    reducer: {
-      navbar: navbarReducer,
-      chatSession: chatSessionReducer,
-      bedrockQuota: bedrockQuotaReducer,
-      bedrockModel: bedrockModelReducer
-    }
-  });
-
 describe("smart-polling-selectors", () => {
   describe("selectIsChatWidgetVisible", () => {
     it("should return false when widget not expanded", () => {
-      const store = createStore();
+      const store = createTestStore();
       expect(selectIsChatWidgetVisible(store.getState())).toBe(false);
     });
 
     it("should return true when widget expanded", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setChatWidgetExpanded(true));
       expect(selectIsChatWidgetVisible(store.getState())).toBe(true);
     });
@@ -59,13 +46,13 @@ describe("smart-polling-selectors", () => {
 
   describe("selectUserActivityLevel", () => {
     it("should return 'active' for recent activity", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(updateUserActivity());
       expect(selectUserActivityLevel(store.getState())).toBe("active");
     });
 
     it("should return 'inactive' when lastUserActivity is very old", () => {
-      const store = createStore();
+      const store = createTestStore();
       const level = selectUserActivityLevel(store.getState());
       expect(["active", "idle", "inactive"]).toContain(level);
     });
@@ -73,7 +60,7 @@ describe("smart-polling-selectors", () => {
 
   describe("selectUIContext", () => {
     it("should detect chat page", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setCurrentRoute("/chat"));
       const ctx = selectUIContext(store.getState());
       expect(ctx.isChatPage).toBe(true);
@@ -81,7 +68,7 @@ describe("smart-polling-selectors", () => {
     });
 
     it("should detect widget visible", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setChatWidgetExpanded(true));
       const ctx = selectUIContext(store.getState());
       expect(ctx.isWidgetVisible).toBe(true);
@@ -89,7 +76,7 @@ describe("smart-polling-selectors", () => {
     });
 
     it("should report no visible chat UI by default", () => {
-      const store = createStore();
+      const store = createTestStore();
       const ctx = selectUIContext(store.getState());
       expect(ctx.hasVisibleChatUI).toBe(false);
     });
@@ -97,12 +84,12 @@ describe("smart-polling-selectors", () => {
 
   describe("selectQuotaUsageLevel", () => {
     it("should return 'low' when no model selected", () => {
-      const store = createStore();
+      const store = createTestStore();
       expect(selectQuotaUsageLevel(store.getState())).toBe("low");
     });
 
     it("should return 'high' when usage > 85%", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         updateQuota({
           modelId: "model-a",
@@ -123,14 +110,14 @@ describe("smart-polling-selectors", () => {
 
   describe("selectSmartPollingInterval", () => {
     it("should suspend polling when no chat UI visible", () => {
-      const store = createStore();
+      const store = createTestStore();
       const polling = selectSmartPollingInterval(store.getState());
       expect(polling.interval).toBe(POLLING_INTERVALS.SUSPENDED);
       expect(polling.shouldPoll).toBe(false);
     });
 
     it("should use ACTIVE interval on chat page with recent activity", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setCurrentRoute("/chat"));
       store.dispatch(updateUserActivity());
       const polling = selectSmartPollingInterval(store.getState());
@@ -141,7 +128,7 @@ describe("smart-polling-selectors", () => {
     });
 
     it("should use BACKGROUND interval when widget visible but not on chat page", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setChatWidgetExpanded(true));
       store.dispatch(updateUserActivity());
       const polling = selectSmartPollingInterval(store.getState());
@@ -153,7 +140,7 @@ describe("smart-polling-selectors", () => {
 
   describe("selectShouldUpdatePolling", () => {
     it("should detect when interval needs updating", () => {
-      const store = createStore();
+      const store = createTestStore();
       // Default: interval is 0 (suspended), currentPollingInterval is 0
       const update = selectShouldUpdatePolling(store.getState());
       expect(update.shouldUpdate).toBe(false); // both are 0
@@ -174,7 +161,7 @@ describe("smart-polling-selectors", () => {
 
 describe("selectSmartPollingInterval - additional scenarios", () => {
   it("should use IDLE interval on chat page with idle user", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     // Don't dispatch updateUserActivity — user will be "active" from store creation
     // but we can test the structure
@@ -184,7 +171,7 @@ describe("selectSmartPollingInterval - additional scenarios", () => {
   });
 
   it("should adjust interval for high quota usage", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     store.dispatch(updateUserActivity());
     // Can't easily set high quota without selectedModel, but verify structure
@@ -200,7 +187,7 @@ describe("selectQuotaUsageLevel - additional scenarios", () => {
     // This requires a selected model in bedrockModel state
     // which we can't easily set without the async thunk
     // Verify the selector returns a valid value
-    const store = createStore();
+    const store = createTestStore();
     const level = selectQuotaUsageLevel(store.getState());
     expect(["low", "medium", "high"]).toContain(level);
   });
@@ -212,7 +199,7 @@ describe("selectQuotaUsageLevel - additional scenarios", () => {
 
 describe("selectUserActivityLevel - branch coverage", () => {
   it("should return 'inactive' when no lastUserActivity", () => {
-    const store = createStore();
+    const store = createTestStore();
     // Override chatSession state with null lastUserActivity
     const state = store.getState();
     const result = selectUserActivityLevel({
@@ -226,7 +213,7 @@ describe("selectUserActivityLevel - branch coverage", () => {
   });
 
   it("should return 'idle' for activity between 2 and 10 minutes ago", () => {
-    const store = createStore();
+    const store = createTestStore();
     const state = store.getState();
     // Set lastUserActivity to 5 minutes ago
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
@@ -238,7 +225,7 @@ describe("selectUserActivityLevel - branch coverage", () => {
   });
 
   it("should return 'inactive' for activity older than 10 minutes", () => {
-    const store = createStore();
+    const store = createTestStore();
     const state = store.getState();
     const fifteenMinutesAgo = Date.now() - 15 * 60 * 1000;
     const result = selectUserActivityLevel({
@@ -251,7 +238,7 @@ describe("selectUserActivityLevel - branch coverage", () => {
 
 describe("selectSmartPollingInterval - deep branch coverage", () => {
   it("should use BACKGROUND interval for chat page with inactive user", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     const state = store.getState();
     const fifteenMinutesAgo = Date.now() - 15 * 60 * 1000;
@@ -264,7 +251,7 @@ describe("selectSmartPollingInterval - deep branch coverage", () => {
   });
 
   it("should use IDLE interval for chat page with idle user", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     const state = store.getState();
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
@@ -277,7 +264,7 @@ describe("selectSmartPollingInterval - deep branch coverage", () => {
   });
 
   it("should halve interval when quota is high and base > ACTIVE", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     const state = store.getState();
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
@@ -304,7 +291,7 @@ describe("selectSmartPollingInterval - deep branch coverage", () => {
   });
 
   it("should increase interval when quota is low and base < BACKGROUND", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     store.dispatch(updateUserActivity());
     const state = store.getState();
@@ -318,7 +305,7 @@ describe("selectSmartPollingInterval - deep branch coverage", () => {
 
 describe("selectQuotaUsageLevel - branch coverage", () => {
   it("should return 'high' when requests > 85%", () => {
-    const store = createStore();
+    const store = createTestStore();
     const state = store.getState();
     const result = selectQuotaUsageLevel({
       ...state,
@@ -341,7 +328,7 @@ describe("selectQuotaUsageLevel - branch coverage", () => {
   });
 
   it("should return 'medium' when usage between 60-85%", () => {
-    const store = createStore();
+    const store = createTestStore();
     const state = store.getState();
     const result = selectQuotaUsageLevel({
       ...state,
@@ -364,7 +351,7 @@ describe("selectQuotaUsageLevel - branch coverage", () => {
   });
 
   it("should return 'low' when usage < 60%", () => {
-    const store = createStore();
+    const store = createTestStore();
     const state = store.getState();
     const result = selectQuotaUsageLevel({
       ...state,
@@ -389,7 +376,7 @@ describe("selectQuotaUsageLevel - branch coverage", () => {
 
 describe("selectShouldUpdatePolling - branch coverage", () => {
   it("should not update when intervals match", () => {
-    const store = createStore();
+    const store = createTestStore();
     // Default: both are 0 (suspended)
     const update = selectShouldUpdatePolling(store.getState() as never);
     expect(update.shouldUpdate).toBe(false);
@@ -397,7 +384,7 @@ describe("selectShouldUpdatePolling - branch coverage", () => {
   });
 
   it("should update when current interval differs from smart interval", () => {
-    const store = createStore();
+    const store = createTestStore();
     store.dispatch(setCurrentRoute("/chat"));
     store.dispatch(updateUserActivity());
     // Now smart interval > 0 but currentPollingInterval is still 0

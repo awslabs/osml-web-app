@@ -13,16 +13,15 @@ ARG PACKAGES="wget"
 # Give sudo permissions
 USER root
 
-# Configure, update, and refresh yum environment
+# Update base packages, install build dependencies, and clean the dnf
+# cache in a single layer. Splitting these across multiple RUN directives
+# leaves the dnf package cache (~50 MB) in an earlier layer even after a
+# later `rm -rf /var/cache/dnf`, because Docker commits each layer
+# individually.
 RUN dnf -y upgrade && \
+    dnf install -y $PACKAGES && \
     dnf clean all && \
     rm -rf /var/cache/dnf
-
-# Install all our dependencies including curl for health checks
-RUN dnf install -y $PACKAGES
-
-# Clean up after installing packages
-RUN rm -rf /var/cache/dnf
 
 # Install Miniconda with architecture detection
 RUN ARCH=$(uname -m) && \
@@ -62,6 +61,11 @@ FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal AS mcp-server
 ENV CONDA_ENV_NAME="osml_stac_loader"
 ENV PATH="/opt/conda/bin:/opt/conda/envs/osml_stac_loader/bin:/usr/local/bin:/usr/bin:/bin"
 
+# Install curl (HEALTHCHECK) and shadow-utils (useradd); neither is in the minimal base.
+RUN dnf install -y curl-minimal shadow-utils && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
 # Copy the conda environment from build stage
 COPY --from=build /opt/conda /opt/conda
 
@@ -72,8 +76,17 @@ RUN ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh
 COPY . /app
 WORKDIR /app
 
+# Run as non-root (CKV_DOCKER_8). useradd via absolute path — /usr/sbin is not on PATH.
+RUN /usr/sbin/useradd -u 1001 -m -s /bin/bash appuser && \
+    chown -R appuser:appuser /app /opt/conda
+USER appuser
+
 # Expose port
 EXPOSE 8080
+
+# HEALTHCHECK (CKV_DOCKER_2). Redundant under ECS (task-def handles this); used by local runs.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Set entry point for FastMCP server
 CMD ["/opt/conda/envs/osml_stac_loader/bin/python", "deployed_server.py"]

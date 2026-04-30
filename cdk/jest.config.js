@@ -5,6 +5,7 @@ module.exports = {
   transform: {
     "^.+\\.tsx?$": "ts-jest"
   },
+  globalTeardown: "<rootDir>/test/test-utils.ts",
   collectCoverageFrom: ["lib/**/*.ts", "bin/**/*.ts", "!**/*.d.ts"],
   coverageThreshold: {
     global: {

@@ -22,8 +22,6 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
 
     id_token = get_id_token(event)
 
-    print(id_token)
-
     if not id_token:
         print("Missing id_token in request. Denying access.")
         print(f"REST API authorization handler completed with 'Deny' for resource {event['methodArn']}")
