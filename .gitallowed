@@ -2,3 +2,8 @@
 # See: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
 ASIAIOSFODNN7EXAMPLE
 wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+# Canonical placeholder AWS account id used in AWS documentation and in CDK
+# unit-test fixtures. This is not a real account number.
+# See: https://docs.aws.amazon.com/accounts/latest/reference/manage-acct-identifiers.html
+123456789012

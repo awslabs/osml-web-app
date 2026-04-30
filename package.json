@@ -13,7 +13,8 @@
   "test:coverage": "jest --coverage",
   "cypress:open": "cypress open",
   "cypress:run": "cypress run",
-  "postinstall": "symlink-dir node_modules/cesium/Build/Cesium public/cesium"
+  "postinstall": "symlink-dir node_modules/cesium/Build/Cesium public/cesium",
+  "ash": "ash --mode local --config .ash/ash.yaml --no-fail-on-findings"
  },
  "dependencies": {
   "@dnd-kit/core": "^6.3.1",

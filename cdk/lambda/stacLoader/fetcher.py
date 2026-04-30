@@ -79,6 +79,24 @@ def infer_type_from_extension(file_path: str) -> str:
     return "unknown"
 
 
+def detect_protocol(url: str) -> str:
+    """
+    Detect the protocol of an asset URL.
+
+    Args:
+        url: An asset URL string
+
+    Returns:
+        'http' for HTTP/HTTPS URLs, 's3' for S3 URLs, or 'unsupported' for others
+    """
+    lower = url.lower().strip()
+    if lower.startswith("http://") or lower.startswith("https://"):
+        return "http"
+    if lower.startswith("s3://"):
+        return "s3"
+    return "unsupported"
+
+
 @dataclass
 class FetchResult:
     """Result of fetching a STAC item from a URL."""
@@ -88,23 +106,6 @@ class FetchResult:
     assets_fetched: dict[str, bytes]
     successful_assets: list[str] = field(default_factory=list)
     failed_assets: dict[str, str] = field(default_factory=dict)
-
-    def detect_protocol(url: str) -> str:
-        """
-        Detect the protocol of an asset URL.
-
-        Args:
-            url: An asset URL string
-
-        Returns:
-            'http' for HTTP/HTTPS URLs, 's3' for S3 URLs, or 'unsupported' for others
-        """
-        lower = url.lower().strip()
-        if lower.startswith("http://") or lower.startswith("https://"):
-            return "http"
-        if lower.startswith("s3://"):
-            return "s3"
-        return "unsupported"
 
 
 @dataclass
@@ -541,7 +542,12 @@ class STACFetcher:
                 logger.info(f"Retrying S3 fetch {s3_url} in {backoff}s (attempt {attempt + 1}/{self.max_retries})")
                 await asyncio.sleep(backoff)
 
-        raise last_error  # type: ignore[misc]
+        # Invariant: loop body always sets last_error on failure paths before
+        # exiting, or returns on success. Reaching this point with last_error
+        # unset indicates a logic error, not a retry exhaustion.
+        if last_error is None:
+            raise RuntimeError(f"S3 retry loop for {s3_url} exited without capturing an error")
+        raise last_error
 
     async def _fetch_with_retry(self, url: str) -> httpx.Response:
         """
@@ -601,7 +607,12 @@ class STACFetcher:
                 logger.info(f"Retrying {url} in {backoff}s (attempt {attempt + 1}/{self.max_retries})")
                 await asyncio.sleep(backoff)
 
-        raise last_error  # type: ignore[misc]
+        # Invariant: loop body always sets last_error on failure paths before
+        # exiting, or returns on success. Reaching this point with last_error
+        # unset indicates a logic error, not a retry exhaustion.
+        if last_error is None:
+            raise RuntimeError(f"Retry loop for {url} exited without capturing an error")
+        raise last_error
 
     async def _fetch_assets(
         self, item: Item, fetch_mode: AssetFetchMode = AssetFetchMode.NONE
@@ -630,7 +641,7 @@ class STACFetcher:
             if not self._should_fetch_asset(mime_type, href, fetch_mode):
                 continue
 
-            protocol = FetchResult.detect_protocol(href)
+            protocol = detect_protocol(href)
 
             try:
                 if protocol == "s3":

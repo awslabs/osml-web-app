@@ -1,0 +1,263 @@
+# ASH (Automated Security Helper) configuration.
+#
+# Two-tier filtering model
+# ------------------------
+# Findings are suppressed in two ways, which operate at different stages:
+#
+#   1. Pre-scan path exclusion — the file is never scanned, no finding is
+#      generated. Configured per-scanner below.
+#   2. Post-scan suppression (`global_settings.suppressions`) — the scanner
+#      still runs and produces a finding, which is then filtered out during
+#      aggregation based on rule_id + file path. Useful when a specific rule
+#      is a known false positive on a specific file (e.g. bandit B101 on
+#      test directories, detect-secrets on files containing mock credentials).
+#
+# Where path exclusions live per scanner
+# --------------------------------------
+#   Scanner         | Reads from                                       | Uses global exclude list?
+#   ----------------|--------------------------------------------------|--------------------------
+#   detect-secrets  | global_settings.ignore_paths (filters the        | Yes
+#                   |   scannable file list pre-scan)                  |
+#   bandit          | scanners.bandit.options.excluded_paths           | No — scan() attempts to
+#                   |   (built into --exclude at init)                 |   merge global_ignore_paths
+#                   |                                                  |   but _process_config_options
+#                   |                                                  |   runs at init, so the merge
+#                   |                                                  |   is dead code in practice
+#   checkov         | scanners.checkov.options.skip_path               | No — parameter is received
+#                   |                                                  |   but never applied
+#   semgrep         | scanners.semgrep.options.exclude                 | No — parameter is received
+#                   |                                                  |   but never applied
+#   npm-audit       | N/A — audits the npm dependency graph, not files |
+#   cdk-nag         | N/A — inspects synthesized CDK templates         |
+#
+# Additionally, `.ignore` at the repo root is consumed by ASH's file-discovery
+# step (automated_security_helper/utils/get_scan_set.py). Files excluded there
+# are removed from the scan-set before any scanner sees them, which affects
+# every scanner that receives a scan-set (currently detect-secrets).
+#
+# Pattern semantics
+# -----------------
+#   - global_settings.ignore_paths & .suppressions: matched by
+#     automated_security_helper.utils.suppression_matcher.file_path_matches.
+#     Patterns with `**` go through a custom recursive-glob matcher (so
+#     `**/cdk.out/**` matches files at any depth); patterns without `**` go
+#     through Python's fnmatch against the whole relative path (so plain
+#     `cdk.out/` does NOT match `cdk/cdk.out/foo.json`). Matching is
+#     case-insensitive on both sides.
+#   - .ignore: gitignore syntax via igittigitt. Anchored at the filesystem
+#     root because ASH calls it with base_path="/", so patterns without a
+#     leading `**/` won't match paths deep under the repo root. Always use
+#     `**/dirname/**` form.
+#   - scanners.checkov.options.skip_path: substring-matched as regex against
+#     the full path (checkov's `--skip-path` semantics).
+#   - scanners.semgrep.options.exclude: glob.
+#
+# ASH quoting patch (required for v3.2.1 through at least v3.5.2)
+# ---------------------------------------------------------------
+# ASH's checkov/bandit scanner plugins build their `--skip-path=` and
+# `--exclude=` arguments with literal double-quotes embedded in the value
+# (e.g. `--skip-path="cdk.out"`). Because there is no shell between Python
+# and the child process, those quotes are passed verbatim into argv and the
+# downstream tool compiles a regex that contains literal `"` characters —
+# which never match a real path, so exclusions silently fail.
+#
+# The workaround is `scripts/patch-ash-quoting-bug.py`, which rewrites the
+# two affected plugin files to drop the embedded quotes. CI runs the patch
+# automatically after installing ASH; if you run ash locally, run the patch
+# once after install. The script is idempotent and creates a .bak backup.
+#
+# Maintenance notes
+# -----------------
+# For general build/cache directories, the primary exclusion lives in `.ignore`
+# (which hides it from the scan-set) and in each per-scanner list (bandit,
+# checkov, semgrep walk their target themselves and need their own lists).
+# `global_settings.ignore_paths` is reserved for cases that need either:
+#   - Detect-secrets post-scan filtering for files that re-enter the scan-set
+#     via ASH_INCLUSIONS (e.g. `cdk/cdk.out/*.template.json` is re-added by
+#     ASH's hardcoded `!**/*.template.json` rule).
+#   - Aggregation-time filtering for findings that should be dropped from the
+#     final report regardless of which scanner produced them.
+#
+# When adding a new build/cache dir exclusion:
+#   1. Add to .ignore (single source of truth for scan-set filtering).
+#   2. Add to scanners.bandit.options.excluded_paths.
+#   3. Add to scanners.checkov.options.skip_path.
+#   4. Add to scanners.semgrep.options.exclude.
+#
+# When adding a detect-secrets-specific or cross-scanner aggregation filter:
+#   Add to global_settings.ignore_paths.
+#
+# When suppressing a specific rule on a specific file:
+#   Add an entry to global_settings.suppressions with rule_id + path + reason.
+
+global_settings:
+  ignore_paths:
+    # Entries here serve detect-secrets (pre-scan scan-set filter) and the
+    # aggregation-time finding filter. Build/cache dirs are NOT listed here
+    # because `.ignore` + per-scanner lists already cover them; keeping only
+    # patterns with a unique role avoids four-place duplication.
+    - path: "**/cdk.out/**"
+      reason: "CDK synth output. Required here because ASH_INCLUSIONS' `!**/*.template.json` rule re-adds cdk.out/*.template.json to the scan-set; detect-secrets would otherwise find ~144 Base64 entropy strings in CFN templates."
+    - path: "build.zip"
+      reason: "Packaged build artifact; generated locally, not relevant to security review"
+    - path: "**/public/cesium/**"
+      reason: "Vendored Cesium assets. Belt-and-suspenders with `.ignore`."
+    - path: "**/public/.ignored_cesium/**"
+      reason: "Vendored Cesium assets backup copy. Belt-and-suspenders with `.ignore`."
+    - path: "**/cdk.context.json"
+      reason: "CDK context cache (AMI IDs, VPC lookups); gitignored"
+    - path: ".gitallowed"
+      reason: "git-secrets allowlist enumerates known-safe placeholder credentials"
+  suppressions:
+    # Tests that use Moto or literal placeholder credentials. Each entry pairs
+    # a specific rule_id with a specific file so unrelated secret types in the
+    # same file would still be flagged.
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cdk/lambda/quotaCodesGenerator/tox.ini"
+      reason: "Moto placeholder credentials (AWS_SECRET_ACCESS_KEY=testing) for pytest"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cdk/lambda/detectionBridgeTranslator/tox.ini"
+      reason: "Moto placeholder credentials (AWS_SECRET_ACCESS_KEY=testing) for pytest"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cdk/lambda/stacLoader/tox.ini"
+      reason: "Moto placeholder credentials (AWS_SECRET_ACCESS_KEY=testing) for pytest"
+    - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
+      path: "cdk/lambda/stacLoader/tox.ini"
+      reason: "False-positive entropy match on test env values (e.g. WORKSPACE_BUCKET_NAME=test-workspace-bucket)"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cdk/lambda/webAppUtility/tox.ini"
+      reason: "Moto placeholder credentials (AWS_SECRET_ACCESS_KEY=testing) for pytest"
+    - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
+      path: "cdk/lambda/webAppUtility/tox.ini"
+      reason: "False-positive entropy match on test env values"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cdk/lambda/webAppUtility/tests/conftest.py"
+      reason: "Moto pytest fixture setting os.environ['AWS_SECRET_ACCESS_KEY']='testing'"
+    - rule_id: "SECRET-AWS-ACCESS-KEY"
+      path: "cdk/lambda/stacLoader/tests/test_cross_account_s3.py"
+      reason: "AWS documentation sample key ASIAIOSFODNN7EXAMPLE used as FAKE_CREDENTIALS in STS test"
+    - rule_id: "SECRET-BASE64-HIGH-ENTROPY-STRING"
+      path: "cdk/lambda/stacLoader/tests/test_cross_account_s3.py"
+      reason: "AWS documentation sample secret (wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY) used as FAKE_CREDENTIALS"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "cdk/lambda/stacLoader/tests/test_cross_account_s3.py"
+      reason: "AWS documentation sample secret used as FAKE_CREDENTIALS in STS test"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "test/app/layout.test.tsx"
+      reason: "Jest test sets process.env.NEXTAUTH_SECRET='test-secret'; literal placeholder"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: "test/auth/config.test.ts"
+      reason: "Jest test sets process.env.NEXTAUTH_SECRET='test-secret'; literal placeholder"
+    - rule_id: "SECRET-SECRET-KEYWORD"
+      path: ".github/workflows/pr.yml"
+      reason: "GitHub Actions `secrets: inherit` keyword, not a secret value"
+    # Bandit suppressions.
+    # B101 (assert_used): bandit flags every `assert` because it's stripped
+    # under `python -O`, but `assert` is how pytest expresses test assertions.
+    # Suppressing B101 path-wide on test directories is safe: an `assert` in
+    # test code cannot represent a security vulnerability by any interpretation.
+    - rule_id: "B101"
+      path: "**/tests/**"
+      reason: "pytest uses `assert` for test assertions; B101 is categorically not applicable to test code"
+    - rule_id: "B105"
+      path: "cdk/lambda/webAppUtility/tests/conftest.py"
+      reason: "Moto pytest fixture sets AWS_SECRET_ACCESS_KEY / AWS_SECURITY_TOKEN / AWS_SESSION_TOKEN to literal 'testing'; same mock credentials already suppressed for detect-secrets"
+    - rule_id: "B311"
+      path: "cdk/lambda/stacLoader/tests/integration/test_spacenet7_loading.py"
+      reason: "random.sample() selects test STAC items for integration coverage; non-cryptographic use in a test fixture"
+    - rule_id: "B311"
+      path: "cdk/lambda/stacLoader/tests/integration/test_stress_loading.py"
+      reason: "random.sample() selects test STAC items for stress-test coverage; non-cryptographic use in a test fixture"
+
+scanners:
+  # npm-audit is disabled: npm dependency vulnerabilities are already
+  # surfaced by GitHub's native Dependabot alerts and the dependency
+  # graph, so running `npm audit` through ASH would duplicate findings
+  # in the Code scanning tab.
+  npm-audit:
+    enabled: false
+  bandit:
+    enabled: true
+    options:
+      excluded_paths:
+        - path: "cdk.out/"
+          reason: "CDK synth output"
+        - path: ".next/"
+          reason: "Next.js build output"
+        - path: "out/"
+          reason: "Build output"
+        - path: "build/"
+          reason: "Build output"
+        - path: "dist/"
+          reason: "Build output"
+        - path: "coverage/"
+          reason: "Test coverage output"
+        - path: "htmlcov/"
+          reason: "Coverage HTML output"
+        - path: ".tox/"
+          reason: "Tox virtual envs"
+        - path: ".mypy_cache/"
+          reason: "mypy type-check cache"
+        - path: ".pytest_cache/"
+          reason: "pytest cache"
+  semgrep:
+    enabled: true
+    options:
+      rules:
+        - "auto"
+        - "p/github-actions"
+        - ".ash/semgrep-rules"
+      exclude:
+        - "cdk.out/"
+        - ".next/"
+        - "out/"
+        - "build/"
+        - "dist/"
+        - "coverage/"
+        - "htmlcov/"
+        - ".tox/"
+        - ".mypy_cache/"
+        - ".pytest_cache/"
+        - "build.zip"
+        - "public/cesium/"
+  checkov:
+    enabled: true
+    options:
+      skip_path:
+        - path: "cdk.out"
+          reason: "CDK synth output"
+        - path: ".next"
+          reason: "Next.js build output"
+        - path: "coverage"
+          reason: "Test coverage output"
+        - path: "htmlcov"
+          reason: "Coverage HTML output"
+        - path: ".tox"
+          reason: "Tox virtual envs"
+        - path: ".mypy_cache"
+          reason: "mypy type-check cache"
+        - path: ".pytest_cache"
+          reason: "pytest cache"
+        - path: "cdk/dist"
+          reason: "CDK build output"
+        - path: "cdk/build"
+          reason: "CDK build output"
+  syft:
+    enabled: true
+    options:
+      format: "spdx-json"
+
+reporters:
+  text:
+    enabled: true
+  sarif:
+    enabled: true
+    options:
+      schema_version: "2.1.0"
+      include_rule_metadata: true
+  spdx:
+    enabled: true
+  cyclonedx:
+    enabled: true
+    options:
+      include_licenses: true

@@ -13,13 +13,16 @@ ARG PACKAGES="wget"
 # Give sudo permissions
 USER root
 
-# Configure, update, and refresh dnf environment
-RUN dnf update -y && dnf clean all && dnf makecache
+# Install build dependencies in a single layer so the dnf package cache
+# (/var/cache/dnf, ~50 MB) is removed before the layer is committed and
+# does not end up in the final image.
+RUN dnf update -y && \
+    dnf install -y $PACKAGES && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
-# Install all our dependencies
-RUN dnf install -y $PACKAGES
-
-# Install Miniconda with architecture detection
+# Install Miniconda with architecture detection. Removing the installer
+# script in the same RUN keeps it out of the committed layer.
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
         MINICONDA_VERSION="Miniconda3-latest-Linux-aarch64"; \
@@ -40,13 +43,17 @@ ENV PATH=/opt/conda/bin:$PATH
 # Copy conda ENV
 COPY conda/environment.test.yml ${LAMBDA_TASK_ROOT}/environment.yml
 
-# Accept Conda TOS before creating the environment
+# Accept TOS, create the env, and clean up all conda package caches in a
+# single RUN layer. Splitting `conda env create` and `conda clean -afy`
+# across two RUN layers leaves the package tarballs (~200-400 MB) in the
+# earlier layer even after cleanup, because Docker records deletions on
+# top of the prior layer rather than modifying it.
 RUN conda config --set always_yes true && \
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-# Install python with conda
-RUN conda env create -n ${CONDA_ENV_NAME} --file environment.yml
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+    conda env create -n ${CONDA_ENV_NAME} --file ${LAMBDA_TASK_ROOT}/environment.yml && \
+    conda clean -afy && \
+    rm -rf /opt/conda/pkgs /root/.cache ${LAMBDA_TASK_ROOT}/environment.yml
 
 # Add conda to the path
 ENV PATH=/opt/conda/envs/${CONDA_ENV_NAME}/bin/:$PATH
@@ -55,9 +62,6 @@ ENV PYTHONPATH=/opt/conda/envs/${CONDA_ENV_NAME}/bin
 # We now replace the image's existing Python with Python from the conda environment:
 RUN mv /var/lang/bin/python3.13 /var/lang/bin/python3.13-clean && ln -sf /opt/conda/envs/${CONDA_ENV_NAME}/bin/python /var/lang/bin/python3.13
 
-# Clean up any dangling conda resources
-RUN conda clean -afy
-
 # Copy the integration test code to the LAMBDA_TASK_ROOT directory
 COPY tests/integration/ ${LAMBDA_TASK_ROOT}/tests/integration/
 
@@ -65,6 +69,15 @@ COPY tests/integration/ ${LAMBDA_TASK_ROOT}/tests/integration/
 RUN echo "# Copyright Amazon.com, Inc. or its affiliates." > ${LAMBDA_TASK_ROOT}/__init__.py
 RUN echo "# Copyright Amazon.com, Inc. or its affiliates." > ${LAMBDA_TASK_ROOT}/tests/__init__.py
 RUN echo "# Copyright Amazon.com, Inc. or its affiliates." > ${LAMBDA_TASK_ROOT}/tests/integration/__init__.py
+
+# Run as non-root (CKV_DOCKER_8). Lambda applies its own sandbox at runtime;
+# this benefits defense-in-depth and local runs (docker / RIE).
+RUN chown -R 1001:1001 ${LAMBDA_TASK_ROOT}
+USER 1001
+
+# HEALTHCHECK (CKV_DOCKER_2). Ignored by Lambda at runtime; honored by local runs.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=3s --retries=1 \
+    CMD ["python", "-c", "import sys; sys.exit(0)"]
 
 # Set the entry point for the container
 CMD ["tests.integration.lambda_handler.handler"]

@@ -20,20 +20,8 @@ class QuotaCodeGenerator:
 
     def __init__(self, region: str):
         self.region = region
-        self.bedrock_client = boto3.client("bedrock", region_name=region)
         self.service_quotas_client = boto3.client("service-quotas", region_name=region)
         self.s3_client = boto3.client("s3", region_name=region)
-
-    def discover_text_models(self) -> list:
-        """Discover all Bedrock models that output text."""
-        try:
-            response = self.bedrock_client.list_foundation_models(byOutputModality="TEXT")
-            models = response.get("modelSummaries", [])
-            logger.info(f"Discovered {len(models)} text-capable models")
-            return models
-        except Exception as e:
-            logger.error(f"Failed to discover text models: {e}")
-            return []
 
     def find_quota_code_for_model(
         self, model_name: str, quota_type: str, is_inference_profile: bool = False
@@ -194,12 +182,15 @@ def lambda_handler(event, context):
                 return {"Status": "SUCCESS", "Region": region, "BucketName": bucket_name}
             else:
                 # Raise exception for failure - CDK Provider handles error response
-                raise Exception("Failed to generate quota codes")
+                raise RuntimeError("Failed to generate quota codes")
 
         elif request_type == "Delete":
             logger.info("Delete event - no action needed")
             return {"Status": "DELETED"}
 
+        else:
+            raise ValueError(f"Unsupported RequestType: {request_type}")
+
     except Exception as e:
         logger.error(f"Provider event handler failed: {e}")
-        raise e
+        raise

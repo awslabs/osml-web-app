@@ -107,6 +107,16 @@ export interface StacLoaderDeploymentConfig {
 }
 
 /**
+ * WAFv2 configuration applied to public ALB and REST APIs.
+ */
+export interface WafConfig {
+  /** Whether per-stack WAFv2 WebACLs are created and associated. @default true */
+  enabled?: boolean;
+  /** Per-IP rate limit within a 5-minute sliding window. @default 2000 */
+  requestsPer5Min?: number;
+}
+
+/**
  * Dataplane configuration containing all service-specific settings.
  */
 export interface DataplaneConfig {
@@ -118,6 +128,8 @@ export interface DataplaneConfig {
   modelRunnerApiConfig?: ModelRunnerApiConfig;
   /** WebApp Utility configuration. */
   webAppUtilityConfig?: WebAppUtilityConfig;
+  /** WAFv2 configuration applied to public ALB and REST APIs. */
+  wafConfig?: WafConfig;
 
   // Domain configuration (shared across components)
   /** Route53 hosted zone ID. */
@@ -549,6 +561,39 @@ function validateWebAppUtilityConfig(
 }
 
 /**
+ * Validates and parses the wafConfig section.
+ */
+function validateWafConfig(wafData: unknown): WafConfig | undefined {
+  if (!wafData || typeof wafData !== "object") {
+    return undefined;
+  }
+
+  const waf = wafData as Record<string, unknown>;
+  const result: WafConfig = {};
+
+  if (waf.enabled !== undefined) {
+    result.enabled = validateBooleanField(
+      waf.enabled,
+      "dataplaneConfig.wafConfig.enabled",
+      false,
+      true
+    );
+  }
+
+  if (waf.requestsPer5Min !== undefined) {
+    if (typeof waf.requestsPer5Min !== "number" || waf.requestsPer5Min <= 0) {
+      throw new DeploymentConfigError(
+        `Field 'dataplaneConfig.wafConfig.requestsPer5Min' must be a positive number`,
+        "dataplaneConfig.wafConfig.requestsPer5Min"
+      );
+    }
+    result.requestsPer5Min = waf.requestsPer5Min;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
  * Validates and parses the dataplaneConfig section.
  */
 function validateDataplaneConfig(
@@ -577,6 +622,9 @@ function validateDataplaneConfig(
     dataplane.webAppUtilityConfig
   );
   if (webAppUtilityConfig) result.webAppUtilityConfig = webAppUtilityConfig;
+
+  const wafConfig = validateWafConfig(dataplane.wafConfig);
+  if (wafConfig) result.wafConfig = wafConfig;
 
   // Validate domain configuration (shared across components)
   const domainHostedZoneId = validateStringField(

@@ -5,13 +5,14 @@
  */
 
 import { act } from "@testing-library/react";
+import type { StacItem } from "stac-ts";
 
 import { useStacItemVisibility } from "@/hooks/use-stac-item-visibility";
 
 import { renderHookWithStore } from "../test-utils";
 
 // Mock STAC item
-const mockStacItem = {
+const mockStacItem: StacItem = {
   type: "Feature",
   stac_version: "1.0.0",
   id: "item-1",
@@ -21,7 +22,7 @@ const mockStacItem = {
   properties: { datetime: "2024-01-01T00:00:00Z", title: "Test Item" },
   links: [],
   assets: {}
-} as never;
+};
 
 describe("useStacItemVisibility", () => {
   it("should start with no visible items", () => {
@@ -79,7 +80,7 @@ describe("useStacItemVisibility", () => {
   it("should handle multiple items independently", () => {
     const { result } = renderHookWithStore(() => useStacItemVisibility());
 
-    const item2 = { ...mockStacItem, id: "item-2" } as never;
+    const item2: StacItem = { ...mockStacItem, id: "item-2" };
 
     act(() => {
       result.current.handleToggleVisibility("item-1", mockStacItem);

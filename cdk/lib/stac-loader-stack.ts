@@ -6,6 +6,7 @@ import { Stack, StackProps } from "aws-cdk-lib";
 import { ISecurityGroup, SecurityGroup, Vpc } from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
 
+import { WafConfig } from "./config/app-config";
 import { AuthConfig } from "./constructs/authorizer-function";
 import {
   StacLoaderConfig,
@@ -54,6 +55,9 @@ export interface StacLoaderStackProps extends StackProps {
 
   /** ACM certificate ARN for custom domain TLS (optional) */
   domainCertificateArn?: string;
+
+  /** WAFv2 configuration for the REST API (optional). */
+  wafConfig?: WafConfig;
 }
 
 export class StacLoaderStack extends Stack {
@@ -92,7 +96,8 @@ export class StacLoaderStack extends Stack {
       dataCatalogBaseUrl: props.dataCatalogBaseUrl,
       domainHostedZoneId: props.domainHostedZoneId,
       domainHostedZoneName: props.domainHostedZoneName,
-      domainCertificateArn: props.domainCertificateArn
+      domainCertificateArn: props.domainCertificateArn,
+      wafConfig: props.wafConfig
     });
   }
 }

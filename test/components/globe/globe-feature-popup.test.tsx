@@ -15,6 +15,7 @@ jest.mock("cesium", () => ({
 jest.mock("@/components/globe/globe-feature-popup.css", () => ({}));
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { Viewer } from "cesium";
 
 import { GlobeFeaturePopup } from "@/components/globe/globe-feature-popup";
 
@@ -25,7 +26,11 @@ const mockViewer = {
       removeEventListener: jest.fn()
     }
   }
-} as never;
+};
+
+// Cast to Viewer for prop passing; the component only reads scene.preRender
+// in tests, so the partial mock above is sufficient at runtime.
+const mockViewerProp = mockViewer as unknown as Viewer;
 
 const mockData = {
   position: {} as never,
@@ -48,7 +53,7 @@ describe("GlobeFeaturePopup", () => {
     render(
       <GlobeFeaturePopup
         data={mockData}
-        viewer={mockViewer}
+        viewer={mockViewerProp}
         onClose={jest.fn()}
       />
     );
@@ -59,7 +64,7 @@ describe("GlobeFeaturePopup", () => {
     render(
       <GlobeFeaturePopup
         data={mockData}
-        viewer={mockViewer}
+        viewer={mockViewerProp}
         onClose={jest.fn()}
       />
     );
@@ -74,7 +79,7 @@ describe("GlobeFeaturePopup", () => {
     render(
       <GlobeFeaturePopup
         data={mockData}
-        viewer={mockViewer}
+        viewer={mockViewerProp}
         onClose={onClose}
       />
     );
@@ -89,7 +94,7 @@ describe("GlobeFeaturePopup", () => {
     render(
       <GlobeFeaturePopup
         data={emptyData}
-        viewer={mockViewer}
+        viewer={mockViewerProp}
         onClose={jest.fn()}
       />
     );
@@ -100,7 +105,7 @@ describe("GlobeFeaturePopup", () => {
     render(
       <GlobeFeaturePopup
         data={mockData}
-        viewer={mockViewer}
+        viewer={mockViewerProp}
         onClose={jest.fn()}
       />
     );

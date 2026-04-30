@@ -484,7 +484,7 @@ export const drawFeatureTool: LocalMcpTool = {
       }
 
       // Handle WKT and GeoJSON paths (existing logic)
-      if (!stacUrl && geometry) {
+      if (geometry) {
         // Generate feature ID
         const featureId = id || uuidv4();
 

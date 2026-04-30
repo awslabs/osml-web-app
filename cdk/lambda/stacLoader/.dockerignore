@@ -1,0 +1,48 @@
+# Keep the Docker build context small and prevent local dev artifacts from
+# shipping inside the MCP server runtime image (Dockerfile.mcp) or the
+# integration-test Lambda image (Dockerfile.integ). Both Dockerfiles use
+# this directory as their build context.
+#
+# Important rules to preserve:
+# - Dockerfile.mcp does `COPY . /app` in its final stage, so anything not
+#   excluded here ends up inside the runtime image.
+# - Dockerfile.integ does `COPY tests/integration/`, so `tests/integration/`
+#   MUST remain visible to the build. The `!tests/integration/` negation
+#   below ensures unit tests are stripped while integration tests survive.
+# - `conda/environment.test.yml` is intentionally NOT excluded because
+#   Dockerfile.integ needs it at build time.
+
+# --- Python bytecode and caches ---
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# --- Test / coverage / type-check caches ---
+# .tox/ is the worst offender (~1.4 GB on a local dev box after running
+# tox). .hypothesis/ and .pytest_cache/ are also test-runner byproducts.
+**/.tox/
+**/.hypothesis/
+**/.pytest_cache/
+**/.mypy_cache/
+**/htmlcov/
+**/.coverage
+**/.coverage.*
+.coveragerc
+
+# --- Unit tests (integration tests are kept for Dockerfile.integ) ---
+tests/
+!tests/integration/
+tests/integration/__pycache__/
+
+# --- Editor / IDE / OS metadata ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Version control ---
+.git/
+.gitignore

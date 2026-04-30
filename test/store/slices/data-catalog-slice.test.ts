@@ -5,9 +5,7 @@
  * item details, tab switching) and async thunk state transitions.
  */
 
-import { configureStore } from "@reduxjs/toolkit";
-
-import dataCatalogReducer, {
+import {
   clearSearchResults,
   clearVisibleItems,
   hideItemDetails,
@@ -29,16 +27,8 @@ import dataCatalogReducer, {
   toggleBboxFilter,
   toggleItemVisibility
 } from "@/store/slices/data-catalog-slice";
-import viewportReducer from "@/store/slices/viewport-slice";
 
-// Minimal store with just the slices we need
-const createStore = () =>
-  configureStore({
-    reducer: {
-      dataCatalog: dataCatalogReducer,
-      viewport: viewportReducer
-    }
-  });
+import { createTestStore } from "../../test-utils";
 
 // Helper to build a minimal StacItem-like object
 const makeStacItem = (id: string, title?: string) =>
@@ -59,7 +49,7 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("setActiveTab", () => {
     it("should switch between collections and search", () => {
-      const store = createStore();
+      const store = createTestStore();
       expect(selectActiveTab(store.getState())).toBe("collections");
 
       store.dispatch(setActiveTab("search"));
@@ -75,7 +65,7 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("search filters", () => {
     it("setSearchFilters should merge partial updates", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setSearchFilters({ limit: 100 }));
 
       const filters = selectSearchFilters(store.getState());
@@ -85,7 +75,7 @@ describe("data-catalog-slice", () => {
     });
 
     it("setCollectionFilter should set collection IDs", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setCollectionFilter(["landsat", "sentinel"]));
       expect(selectSearchFilters(store.getState()).collections).toEqual([
         "landsat",
@@ -94,13 +84,13 @@ describe("data-catalog-slice", () => {
     });
 
     it("setQueryFilter should set text query", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(setQueryFilter("urban areas"));
       expect(selectSearchFilters(store.getState()).query).toBe("urban areas");
     });
 
     it("setDateRangeFilter should set start and end dates", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         setDateRangeFilter({
           start: "2024-01-01T00:00:00Z",
@@ -114,7 +104,7 @@ describe("data-catalog-slice", () => {
     });
 
     it("toggleBboxFilter should toggle useBboxFilter", () => {
-      const store = createStore();
+      const store = createTestStore();
       expect(selectSearchFilters(store.getState()).useBboxFilter).toBe(false);
 
       store.dispatch(toggleBboxFilter());
@@ -130,20 +120,20 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("item visibility", () => {
     it("toggleItemVisibility should add item ID when not present", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(toggleItemVisibility("item-1"));
       expect(selectVisibleItems(store.getState())).toContain("item-1");
     });
 
     it("toggleItemVisibility should remove item ID when already present", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(toggleItemVisibility("item-1"));
       store.dispatch(toggleItemVisibility("item-1"));
       expect(selectVisibleItems(store.getState())).not.toContain("item-1");
     });
 
     it("clearVisibleItems should empty the list", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(toggleItemVisibility("item-1"));
       store.dispatch(toggleItemVisibility("item-2"));
       store.dispatch(clearVisibleItems());
@@ -156,7 +146,7 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("item details", () => {
     it("showItemDetails should open modal with item and index", () => {
-      const store = createStore();
+      const store = createTestStore();
       const item = makeStacItem("item-1", "Test Item");
 
       store.dispatch(showItemDetails({ item, index: 3 }));
@@ -168,7 +158,7 @@ describe("data-catalog-slice", () => {
     });
 
     it("hideItemDetails should close modal and clear item", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         showItemDetails({ item: makeStacItem("item-1"), index: 0 })
       );
@@ -180,7 +170,7 @@ describe("data-catalog-slice", () => {
     });
 
     it("navigateToItem should update item from search results", () => {
-      const store = createStore();
+      const store = createTestStore();
 
       // We need to populate results first — use the fulfilled action pattern
       // Instead, test that navigateToItem handles missing index gracefully
@@ -196,7 +186,7 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("clearSearchResults", () => {
     it("should reset results and visible items", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(toggleItemVisibility("item-1"));
       store.dispatch(clearSearchResults());
 
@@ -211,7 +201,7 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("viewpoint status", () => {
     it("setViewpointStatus should track viewpoint state per item", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         setViewpointStatus({
           itemId: "item-1",
@@ -228,7 +218,7 @@ describe("data-catalog-slice", () => {
     });
 
     it("should track error state with message", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         setViewpointStatus({
           itemId: "item-1",
@@ -244,7 +234,7 @@ describe("data-catalog-slice", () => {
     });
 
     it("should track ready state", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         setViewpointStatus({
           itemId: "item-1",
@@ -264,7 +254,7 @@ describe("data-catalog-slice", () => {
   // -----------------------------------------------------------------------
   describe("initial state", () => {
     it("should have sensible defaults", () => {
-      const store = createStore();
+      const store = createTestStore();
       const state = store.getState();
 
       expect(selectCollections(state).data).toEqual([]);
@@ -300,13 +290,13 @@ jest.mock("@/services/viewpoint-service", () => ({
 describe("data-catalog-slice async thunks", () => {
   describe("fetchCollections", () => {
     it("pending should set loading", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(fetchCollections.pending("r", undefined));
       expect(selectCollections(store.getState()).loading).toBe(true);
     });
 
     it("fulfilled should set collections", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         fetchCollections.fulfilled([{ id: "col-1" }] as never, "r", undefined)
       );
@@ -314,7 +304,7 @@ describe("data-catalog-slice async thunks", () => {
     });
 
     it("rejected should set error", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         fetchCollections.rejected(new Error("fail"), "r", undefined)
       );
@@ -324,13 +314,13 @@ describe("data-catalog-slice async thunks", () => {
 
   describe("searchStacItems", () => {
     it("pending should set loading", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(searchStacItems.pending("r", undefined));
       expect(selectSearchResults(store.getState()).loading).toBe(true);
     });
 
     it("fulfilled should set results with context.matched", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         searchStacItems.fulfilled(
           { features: [{ id: "i1" }], context: { matched: 42 } } as never,
@@ -342,7 +332,7 @@ describe("data-catalog-slice async thunks", () => {
     });
 
     it("fulfilled should use numMatched fallback", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         searchStacItems.fulfilled(
           { features: [{ id: "i1" }], numMatched: 100 } as never,
@@ -354,7 +344,7 @@ describe("data-catalog-slice async thunks", () => {
     });
 
     it("rejected should set error", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         searchStacItems.rejected(new Error("timeout"), "r", undefined)
       );
@@ -375,7 +365,7 @@ import {
 describe("data-catalog-slice viewpoint thunks", () => {
   describe("createViewpointForItem", () => {
     it("pending should set item viewpoint to creating", () => {
-      const store = createStore();
+      const store = createTestStore();
       const item = { id: "item-1" } as never;
       store.dispatch(createViewpointForItem.pending("r", item));
       expect(selectItemViewpoints(store.getState())["item-1"]?.status).toBe(
@@ -384,7 +374,7 @@ describe("data-catalog-slice viewpoint thunks", () => {
     });
 
     it("fulfilled should update viewpoint ID", () => {
-      const store = createStore();
+      const store = createTestStore();
       const item = { id: "item-1" } as never;
       store.dispatch(
         createViewpointForItem.fulfilled(
@@ -399,7 +389,7 @@ describe("data-catalog-slice viewpoint thunks", () => {
     });
 
     it("rejected should set error status", () => {
-      const store = createStore();
+      const store = createTestStore();
       const item = { id: "item-1" } as never;
       store.dispatch(
         createViewpointForItem.rejected(null, "r", item, "No image asset")
@@ -412,7 +402,7 @@ describe("data-catalog-slice viewpoint thunks", () => {
 
   describe("pollViewpointStatus", () => {
     it("fulfilled should set status to ready", () => {
-      const store = createStore();
+      const store = createTestStore();
       // First create the viewpoint entry
       store.dispatch(
         setViewpointStatus({
@@ -434,7 +424,7 @@ describe("data-catalog-slice viewpoint thunks", () => {
     });
 
     it("rejected should set error on viewpoint", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         setViewpointStatus({
           itemId: "item-1",
@@ -464,7 +454,7 @@ describe("data-catalog-slice viewpoint thunks", () => {
 describe("data-catalog-slice - additional reducer coverage", () => {
   describe("navigateToItem with populated results", () => {
     it("should update item when navigating within results", () => {
-      const store = createStore();
+      const store = createTestStore();
       const items = [makeStacItem("a", "Item A"), makeStacItem("b", "Item B")];
 
       // Populate search results via fulfilled action
@@ -486,7 +476,7 @@ describe("data-catalog-slice - additional reducer coverage", () => {
     });
 
     it("should handle out-of-bounds navigation gracefully", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         searchStacItems.fulfilled(
           { features: [makeStacItem("a")], context: { matched: 1 } } as never,
@@ -508,7 +498,7 @@ describe("data-catalog-slice - additional reducer coverage", () => {
 
   describe("searchStacItems fulfilled edge cases", () => {
     it("should handle response with no context or numMatched", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         searchStacItems.fulfilled(
           { features: [{ id: "i1" }] } as never,
@@ -523,7 +513,7 @@ describe("data-catalog-slice - additional reducer coverage", () => {
     });
 
     it("should clear loading and error on fulfilled", () => {
-      const store = createStore();
+      const store = createTestStore();
       // First set loading
       store.dispatch(searchStacItems.pending("r", undefined));
       expect(selectSearchResults(store.getState()).loading).toBe(true);
@@ -543,7 +533,7 @@ describe("data-catalog-slice - additional reducer coverage", () => {
 
   describe("fetchCollections fulfilled edge cases", () => {
     it("should clear loading and error on fulfilled", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(fetchCollections.pending("r", undefined));
       expect(selectCollections(store.getState()).loading).toBe(true);
 
@@ -555,7 +545,7 @@ describe("data-catalog-slice - additional reducer coverage", () => {
 
   describe("viewpoint thunk edge cases", () => {
     it("createViewpointForItem fulfilled with empty result", () => {
-      const store = createStore();
+      const store = createTestStore();
       const item = { id: "item-1" } as never;
       store.dispatch(
         createViewpointForItem.fulfilled(
@@ -571,7 +561,7 @@ describe("data-catalog-slice - additional reducer coverage", () => {
     });
 
     it("pollViewpointStatus pending should not crash", () => {
-      const store = createStore();
+      const store = createTestStore();
       store.dispatch(
         pollViewpointStatus.pending("r", {
           itemId: "item-1",
@@ -591,9 +581,6 @@ describe("data-catalog-slice - additional reducer coverage", () => {
 
 import { dataCatalogService } from "@/services/data-catalog-service";
 import { viewpointService } from "@/services/viewpoint-service";
-
-// Need a full store for thunks that call getState()
-import { createTestStore } from "../../test-utils";
 
 describe("data-catalog-slice - thunk body coverage", () => {
   beforeEach(() => {

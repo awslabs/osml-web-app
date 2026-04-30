@@ -9,13 +9,15 @@ import {
   RemovalPolicy,
   Size
 } from "aws-cdk-lib";
-import { AutoScalingGroup } from "aws-cdk-lib/aws-autoscaling";
+import { AutoScalingGroup, ScalingEvents } from "aws-cdk-lib/aws-autoscaling";
 import {
   Certificate,
   CertificateValidation
 } from "aws-cdk-lib/aws-certificatemanager";
 import {
   AmazonLinux2023ImageSsmParameter,
+  BlockDeviceVolume,
+  EbsDeviceVolumeType,
   InstanceClass,
   InstanceSize,
   InstanceType,
@@ -39,24 +41,35 @@ import {
   Role,
   ServicePrincipal
 } from "aws-cdk-lib/aws-iam";
+import { Alias } from "aws-cdk-lib/aws-kms";
 import { Code, Function, Runtime } from "aws-cdk-lib/aws-lambda";
+import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ARecord, HostedZone, RecordTarget } from "aws-cdk-lib/aws-route53";
 import { LoadBalancerTarget } from "aws-cdk-lib/aws-route53-targets";
-import { Bucket, BucketEncryption, IBucket } from "aws-cdk-lib/aws-s3";
+import {
+  BlockPublicAccess,
+  Bucket,
+  BucketEncryption,
+  IBucket
+} from "aws-cdk-lib/aws-s3";
 import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
+import { Topic } from "aws-cdk-lib/aws-sns";
 import {
   AwsCustomResource,
   AwsCustomResourcePolicy,
   PhysicalResourceId,
   Provider
 } from "aws-cdk-lib/custom-resources";
+import { NagSuppressions } from "cdk-nag";
 import { execSync } from "child_process";
 import { Construct } from "constructs";
 import { copyFileSync, existsSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
 import { URL } from "url";
 
+import { WafConfig } from "../config/app-config";
 import { OSMLAccount } from "./types";
+import { WebAppWaf } from "./web-app-waf";
 
 export interface WebAppConfig {
   buildFromSource?: boolean;
@@ -110,6 +123,11 @@ export interface WebUIProps {
    * Accepts partial config - construct will apply defaults for missing values.
    */
   config?: Partial<WebAppConfig>;
+
+  /**
+   * WAFv2 configuration for the internet-facing ALB (optional).
+   */
+  wafConfig?: WafConfig;
 }
 
 export class WebUIConstruct extends Construct {
@@ -152,12 +170,47 @@ export class WebUIConstruct extends Construct {
     // Setup class from base properties first
     this.setup(props);
 
+    // Shared target for S3 server access logs produced by the web-app
+    // artifact bucket below. Security controls enabled here:
+    //   - S3-managed encryption at rest
+    //   - public access fully blocked
+    //   - versioning (so accidental overwrites / deletes are recoverable)
+    //   - SSL/TLS-only access via bucket policy
+    //   - a 90-day expiration lifecycle rule to bound log growth
+    // The suppression below records the logging-recursion constraint: an
+    // access-log target bucket cannot itself have server access logging
+    // enabled without creating an infinite logging loop.
+    const accessLogsBucket = new Bucket(this, "WebAppAccessLogsBucket", {
+      encryption: BucketEncryption.S3_MANAGED,
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      versioned: true,
+      enforceSSL: true,
+      removalPolicy: this.removalPolicy,
+      autoDeleteObjects: this.removalPolicy === RemovalPolicy.DESTROY,
+      lifecycleRules: [{ expiration: Duration.days(90) }]
+    });
+
+    NagSuppressions.addResourceSuppressions(accessLogsBucket, [
+      {
+        id: "AwsSolutions-S1",
+        reason:
+          "This bucket is the target of server access logs for the web-app artifact bucket and the ALB. Enabling access logs on the access-log bucket itself would create an infinite logging recursion. The bucket has public access blocked, enforces SSL/TLS in transit, is encrypted with S3-managed keys, has versioning enabled, and has a 90-day expiration lifecycle rule to bound log growth, so its security posture is acceptable without an additional logging layer."
+      }
+    ]);
+
     // Create artifact bucket
     const artifactBucket = new Bucket(this, "ArtifactBucket", {
       bucketName: `web-app-deployment-artifacts-${props.account.id}`,
       encryption: BucketEncryption.S3_MANAGED,
       removalPolicy: this.removalPolicy,
-      autoDeleteObjects: true
+      autoDeleteObjects: true,
+      // Enforce SSL/TLS for every request; the accompanying auto-generated
+      // bucket policy denies any request made over plain HTTP.
+      enforceSSL: true,
+      // Ship S3 server access logs to the shared web-app log bucket under a
+      // bucket-specific prefix so operators can audit access per bucket.
+      serverAccessLogsBucket: accessLogsBucket,
+      serverAccessLogsPrefix: "artifacts/"
     });
 
     // Deployment method depends on buildFromSource flag
@@ -246,6 +299,34 @@ export class WebUIConstruct extends Construct {
         onEventHandler: this.createArtifactDownloadFunction(artifactBucket)
       });
 
+      NagSuppressions.addResourceSuppressions(
+        artifactProvider,
+        [
+          {
+            id: "AwsSolutions-L1",
+            reason:
+              "The CDK Provider framework-onEvent Lambda has its runtime set by the aws-cdk-lib Provider construct internals; the consumer cannot override the framework Lambda's runtime without replacing the Provider. The framework runtime advances with aws-cdk-lib releases."
+          },
+          {
+            id: "AwsSolutions-IAM4",
+            appliesTo: [
+              "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            ],
+            reason:
+              "The CDK Provider framework Lambda uses the AWS-published AWSLambdaBasicExecutionRole managed policy for CloudWatch Logs access. The Provider construct creates this framework function on the consumer's behalf and does not expose a hook to substitute a customer-managed log policy."
+          },
+          {
+            id: "AwsSolutions-IAM5",
+            appliesTo: [
+              "Resource::<WebAppArtifactDownloadFunction152F6856.Arn>:*"
+            ],
+            reason:
+              "The CDK Provider framework grants lambda:InvokeFunction on the inner onEventHandler Lambda using an ARN:version-qualifier wildcard so it can invoke any published version or $LATEST. The resource is scoped to the single inner Lambda."
+          }
+        ],
+        true
+      );
+
       // Create custom resource to fetch and deploy from URL
       new CustomResource(this, "ArtifactDeployment", {
         serviceToken: artifactProvider.serviceToken,
@@ -262,6 +343,20 @@ export class WebUIConstruct extends Construct {
       internetFacing: true,
       securityGroup: this.albSecurityGroup
     });
+
+    // Ship ELB access logs to the shared web-app log bucket under a prefix
+    // so operators can audit request-level traffic through the ALB.
+    this.alb.logAccessLogs(accessLogsBucket, "alb-access-logs");
+
+    // Per-stack WAFv2 WebACL protecting the internet-facing ALB.
+    if (props.wafConfig?.enabled !== false) {
+      new WebAppWaf(this, "WebAppAlbWaf", {
+        resourceArn: this.alb.loadBalancerArn,
+        namePrefix: `${this.projectName}-webui`,
+        isProd: props.isProd,
+        requestsPer5Min: props.wafConfig?.requestsPer5Min
+      });
+    }
 
     let listener;
 
@@ -300,6 +395,14 @@ export class WebUIConstruct extends Construct {
       });
     }
 
+    // CloudWatch log group for PM2, nginx, and user-data logs shipped
+    // by the CloudWatch agent installed via user data below.
+    const webAppLogGroup = new LogGroup(this, "WebAppLogGroup", {
+      logGroupName: `/${this.projectName}/web-app`,
+      retention: RetentionDays.ONE_MONTH,
+      removalPolicy: this.removalPolicy
+    });
+
     // User data script
     const userData = UserData.forLinux();
 
@@ -313,7 +416,7 @@ export class WebUIConstruct extends Construct {
 
       // Install basic utilities
       "echo 'Installing basic utilities'",
-      "dnf install -q -y unzip aws-cli nginx",
+      "dnf install -q -y unzip aws-cli nginx amazon-cloudwatch-agent",
 
       // Install Node.js 24 via NVM
       "echo 'Installing Node.js 24 via NVM'",
@@ -371,6 +474,49 @@ export class WebUIConstruct extends Construct {
       // Configure nginx
       "echo 'Configuring Nginx'",
       this.getNginxConfig(),
+
+      // Configure CloudWatch agent to ship PM2, nginx, and user-data logs.
+      // The agent is started here (before PM2) so any crash during the
+      // Next.js startup that follows is captured in CloudWatch.
+      "echo 'Configuring CloudWatch agent'",
+      "cat << 'EOF' > /opt/aws/amazon-cloudwatch-agent/bin/config.json",
+      JSON.stringify({
+        logs: {
+          logs_collected: {
+            files: {
+              collect_list: [
+                {
+                  file_path: "/root/.pm2/logs/next-app-out.log",
+                  log_group_name: webAppLogGroup.logGroupName,
+                  log_stream_name: "{instance_id}/next-app-out"
+                },
+                {
+                  file_path: "/root/.pm2/logs/next-app-error.log",
+                  log_group_name: webAppLogGroup.logGroupName,
+                  log_stream_name: "{instance_id}/next-app-error"
+                },
+                {
+                  file_path: "/var/log/user-data-script.log",
+                  log_group_name: webAppLogGroup.logGroupName,
+                  log_stream_name: "{instance_id}/user-data"
+                },
+                {
+                  file_path: "/var/log/nginx/access.log",
+                  log_group_name: webAppLogGroup.logGroupName,
+                  log_stream_name: "{instance_id}/nginx-access"
+                },
+                {
+                  file_path: "/var/log/nginx/error.log",
+                  log_group_name: webAppLogGroup.logGroupName,
+                  log_stream_name: "{instance_id}/nginx-error"
+                }
+              ]
+            }
+          }
+        }
+      }),
+      "EOF",
+      "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/bin/config.json -s",
 
       // Set up PM2 environment
       "echo 'Setting up PM2 environment'",
@@ -534,17 +680,35 @@ export class WebUIConstruct extends Construct {
     const ec2Role = new Role(this, "EC2InstanceRole", {
       assumedBy: new ServicePrincipal("ec2.amazonaws.com"),
       managedPolicies: [
-        ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore")
+        ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"),
+        ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy")
       ]
     });
 
     // Create Launch Template
     const launchTemplate = new LaunchTemplate(this, "WebAppLaunchTemplate", {
       instanceType: InstanceType.of(InstanceClass.T3, InstanceSize.LARGE),
-      machineImage: new AmazonLinux2023ImageSsmParameter(),
+      machineImage: new AmazonLinux2023ImageSsmParameter({
+        cachedInContext: false
+      }),
       userData: userData,
       securityGroup: this.ec2SecurityGroup,
-      role: ec2Role
+      role: ec2Role,
+      // Enforce EBS encryption at rest on the root volume of every instance
+      // launched from this template. Without an explicit block-device
+      // mapping, the launch template would inherit the AMI's default which
+      // leaves encryption off unless the account-level default encryption
+      // setting is enabled. GP3 is a cost/perf default that matches the
+      // t3.large instance profile used above.
+      blockDevices: [
+        {
+          deviceName: "/dev/xvda",
+          volume: BlockDeviceVolume.ebs(8, {
+            encrypted: true,
+            volumeType: EbsDeviceVolumeType.GP3
+          })
+        }
+      ]
     });
 
     new AwsCustomResource(this, "SetDefaultWebAppLaunchTemplate", {
@@ -562,12 +726,30 @@ export class WebUIConstruct extends Construct {
       })
     });
 
+    // SNS topic that receives ASG instance lifecycle events (launch, terminate,
+    // launch-error, terminate-error). Encryption at rest is provided by the
+    // AWS-managed SNS KMS key (alias/aws/sns) and a bucket-policy equivalent
+    // is attached via enforceSSL so every publish request must use TLS.
+    const asgNotificationTopic = new Topic(this, "AsgNotificationTopic", {
+      displayName: "WebApp ASG Instance Lifecycle Events",
+      masterKey: Alias.fromAliasName(this, "SnsDefaultKey", "alias/aws/sns"),
+      enforceSSL: true
+    });
+
     // Create ASG using Launch Template
     const asg = new AutoScalingGroup(this, "WebAppAsg", {
       vpc: props.vpc,
       launchTemplate: launchTemplate,
       minCapacity: 2,
-      maxCapacity: 4
+      maxCapacity: 4,
+      // Publish every launch, terminate, and error lifecycle event to the SNS
+      // topic above so operators can observe fleet churn.
+      notifications: [
+        {
+          topic: asgNotificationTopic,
+          scalingEvents: ScalingEvents.ALL
+        }
+      ]
     });
 
     // Add instance refresh trigger with completion waiting
@@ -581,6 +763,34 @@ export class WebUIConstruct extends Construct {
       }
     );
 
+    NagSuppressions.addResourceSuppressions(
+      instanceRefreshProvider,
+      [
+        {
+          id: "AwsSolutions-L1",
+          reason:
+            "The CDK Provider framework-onEvent Lambda has its runtime set by the aws-cdk-lib Provider construct internals; the consumer cannot override the framework Lambda's runtime without replacing the Provider. The framework runtime advances with aws-cdk-lib releases."
+        },
+        {
+          id: "AwsSolutions-IAM4",
+          appliesTo: [
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ],
+          reason:
+            "The CDK Provider framework Lambda uses the AWS-published AWSLambdaBasicExecutionRole managed policy for CloudWatch Logs access. The Provider construct does not expose a hook to substitute a customer-managed log policy."
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          appliesTo: [
+            "Resource::<WebAppInstanceRefreshFunction486FE838.Arn>:*"
+          ],
+          reason:
+            "The CDK Provider framework grants lambda:InvokeFunction on the inner Lambda using an ARN:qualifier wildcard; scoped to the single inner Lambda."
+        }
+      ],
+      true
+    );
+
     new CustomResource(this, "InstanceRefreshTrigger", {
       serviceToken: instanceRefreshProvider.serviceToken,
       properties: {
@@ -591,6 +801,40 @@ export class WebUIConstruct extends Construct {
 
     // Grant S3 read access to EC2 instances
     artifactBucket.grantRead(asg.role);
+
+    // The EC2 role is attached to the launch template used by the ASG above.
+    // artifactBucket.grantRead(asg.role) adds an inline policy statement to
+    // the role's auto-generated DefaultPolicy child, so the IAM5 suppression
+    // for the grantRead-emitted action/resource wildcards must be applied
+    // AFTER grantRead with applyToChildren: true so cdk-nag picks up the
+    // DefaultPolicy child created by the grant call. The IAM4 suppression
+    // covers the managed policies attached at role construction.
+    NagSuppressions.addResourceSuppressions(
+      ec2Role,
+      [
+        {
+          id: "AwsSolutions-IAM4",
+          appliesTo: [
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonSSMManagedInstanceCore",
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/CloudWatchAgentServerPolicy"
+          ],
+          reason:
+            "The EC2 instances hosting the web app need Systems Manager agent connectivity (Session Manager, Patch Manager, inventory) and CloudWatch agent log shipping for PM2, nginx, and user-data logs. AmazonSSMManagedInstanceCore and CloudWatchAgentServerPolicy are the AWS-published managed policies for those exact grants; no customer-managed equivalents exist that would narrow the action set without duplicating it."
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          appliesTo: [
+            "Action::s3:GetObject*",
+            "Action::s3:GetBucket*",
+            "Action::s3:List*",
+            "Resource::<WebAppArtifactBucket72635782.Arn>/*"
+          ],
+          reason:
+            "Bucket.grantRead() on the web-app artifact bucket emits s3:GetObject*, s3:GetBucket*, and s3:List* action-prefix wildcards together with a bucket/* object-ARN wildcard. The object ARN is already scoped to the single artifact bucket that EC2 instances must read during user-data setup to sync the web app build."
+        }
+      ],
+      true
+    );
 
     // Add ASG to ALB target group
     listener.addTargets("WebAppTarget", {
@@ -677,11 +921,22 @@ EOF`;
   }
 
   private createArtifactDownloadFunction(targetBucket: IBucket): Function {
+    const artifactDownloadLogGroup = new LogGroup(
+      this,
+      "ArtifactDownloadLogGroup",
+      {
+        logGroupName: `/aws/lambda/${this.projectName}-ArtifactDownloader`,
+        retention: RetentionDays.ONE_MONTH,
+        removalPolicy: this.removalPolicy
+      }
+    );
+
     const fn = new Function(this, "ArtifactDownloadFunction", {
       functionName: `${this.projectName}-ArtifactDownloader`,
       description: "Downloads web app build artifacts from a remote URL to S3",
       runtime: Runtime.NODEJS_22_X,
       handler: "index.handler",
+      logGroup: artifactDownloadLogGroup,
       code: Code.fromInline(`
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const https = require('https');
@@ -806,15 +1061,62 @@ exports.handler = async (event, context) => {
 
     targetBucket.grantWrite(fn);
 
+    // targetBucket.grantWrite(fn) adds an inline policy statement to the
+    // Lambda's auto-generated DefaultPolicy child. The IAM5 suppression for
+    // the grantWrite-emitted action/resource wildcards must therefore be
+    // applied AFTER the grantWrite call with applyToChildren: true so cdk-nag
+    // picks up the DefaultPolicy child created by the grant call. The IAM4
+    // suppression covers the Lambda's service-role managed policy.
+    NagSuppressions.addResourceSuppressions(
+      fn,
+      [
+        {
+          id: "AwsSolutions-L1",
+          reason:
+            "This Lambda is pinned to nodejs22.x to stay consistent with the shared web-app Lambda runtime policy and to match the @aws-sdk/client-s3 SDK version bundled in the inline code. nodejs22.x remains an AWS-supported Lambda runtime; advancing the runtime is a coordinated change across every Lambda in this package, not a drive-by upgrade on a single function."
+        },
+        {
+          id: "AwsSolutions-IAM4",
+          appliesTo: [
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ],
+          reason:
+            "AWSLambdaBasicExecutionRole is the AWS-published managed policy that grants Lambda permission to create a log stream and write log events to its own log group. Replacing it with a customer-managed copy would duplicate the grant and drift whenever AWS updates the CloudWatch Logs action set."
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          appliesTo: [
+            "Action::s3:DeleteObject*",
+            "Action::s3:Abort*",
+            "Resource::<WebAppArtifactBucket72635782.Arn>/*"
+          ],
+          reason:
+            "Bucket.grantWrite() emits s3:DeleteObject* and s3:Abort* action-prefix wildcards so multipart uploads can be aborted, together with a bucket/* object-ARN wildcard scoped to the single artifact bucket."
+        }
+      ],
+      true
+    );
+
     return fn;
   }
 
   private createInstanceRefreshFunction(asgName: string): Function {
+    const instanceRefreshLogGroup = new LogGroup(
+      this,
+      "InstanceRefreshLogGroup",
+      {
+        logGroupName: `/aws/lambda/${this.projectName}-InstanceRefresh`,
+        retention: RetentionDays.ONE_MONTH,
+        removalPolicy: this.removalPolicy
+      }
+    );
+
     const fn = new Function(this, "InstanceRefreshFunction", {
       functionName: `${this.projectName}-InstanceRefresh`,
       description: "Triggers ASG instance refresh for web app deployments",
       runtime: Runtime.NODEJS_22_X,
       handler: "index.handler",
+      logGroup: instanceRefreshLogGroup,
       timeout: Duration.minutes(15), // Maximum timeout for Lambda
       code: Code.fromInline(`
 const { AutoScalingClient, StartInstanceRefreshCommand, DescribeInstanceRefreshesCommand } = require('@aws-sdk/client-auto-scaling');
@@ -927,6 +1229,40 @@ exports.handler = async (event, context) => {
       })
     );
 
+    // The two fn.addToRolePolicy calls above extend the Lambda's auto-generated
+    // DefaultPolicy child with autoscaling permissions. The IAM5 suppression
+    // for the Resource-wildcards those statements emit must therefore be
+    // applied AFTER the addToRolePolicy calls with applyToChildren: true so
+    // cdk-nag picks up the DefaultPolicy child.
+    NagSuppressions.addResourceSuppressions(
+      fn,
+      [
+        {
+          id: "AwsSolutions-L1",
+          reason:
+            "This Lambda is pinned to nodejs22.x to stay consistent with the shared web-app Lambda runtime policy and to match the @aws-sdk/client-auto-scaling SDK version bundled in the inline code. nodejs22.x remains an AWS-supported Lambda runtime; advancing the runtime is a coordinated change across every Lambda in this package, not a drive-by upgrade on a single function."
+        },
+        {
+          id: "AwsSolutions-IAM4",
+          appliesTo: [
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ],
+          reason:
+            "AWSLambdaBasicExecutionRole is the AWS-published managed policy that grants Lambda permission to create a log stream and write log events to its own log group. Replacing it would duplicate the grant."
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          appliesTo: [
+            "Resource::arn:aws:autoscaling:*:*:autoScalingGroup:*:autoScalingGroupName/<WebAppWebAppAsgASG11C3C39A>",
+            "Resource::*"
+          ],
+          reason:
+            "The autoscaling:StartInstanceRefresh action requires an ARN whose region/account portions are wildcarded because the ASG is referenced by name and the full ARN is known only at deploy time. The autoscaling:DescribeInstanceRefreshes action is a describe/list call that only accepts Resource::* per the AWS Auto Scaling service contract."
+        }
+      ],
+      true
+    );
+
     return fn;
   }
 
@@ -992,6 +1328,14 @@ exports.handler = async (event, context) => {
         Port.tcp(443),
         "Allow HTTPS traffic"
       );
+
+      NagSuppressions.addResourceSuppressions(this.albSecurityGroup, [
+        {
+          id: "AwsSolutions-EC23",
+          reason:
+            "This ALB serves as the public internet-facing entry point for the web application and must accept traffic from any source IP on HTTPS (and HTTP for redirect-to-HTTPS). Narrowing the ingress CIDR would break the public web app contract. Authentication is enforced at the application layer via OIDC/JWT, and request-level access is audited via the ALB access logs enabled on this stack."
+        }
+      ]);
     }
 
     if (this.config.ec2SecurityGroupId) {

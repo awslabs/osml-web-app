@@ -119,24 +119,48 @@ import { hasViewableImageAsset } from "@/utils/stac-viewpoint-utils";
 
 describe("useViewpointWarming - effect behavior", () => {
   it("should not process items when search results are loading", () => {
+    // Item is viewable; what we're testing is that loading state blocks processing
+    (hasViewableImageAsset as jest.Mock).mockReturnValue(true);
+
+    const baseState = createTestStore().getState();
     const store = createTestStore({
       dataCatalog: {
-        ...createTestStore().getState().dataCatalog,
-        searchResults: {
-          features: [{ id: "item-1" }],
-          loading: true,
-          totalCount: 1,
-          error: null
+        ...baseState.dataCatalog,
+        search: {
+          ...baseState.dataCatalog.search,
+          results: {
+            features: [
+              {
+                id: "item-1",
+                type: "Feature",
+                geometry: null,
+                properties: { datetime: null },
+                assets: { visual: { href: "s3://b/i.tif" } }
+              }
+            ] as never,
+            loading: true,
+            totalCount: 1,
+            error: null
+          }
         }
       }
-    } as never);
-
-    const { result } = renderHookWithStore(() => useViewpointWarming(), {
-      store
     });
 
-    // No viewpoints should be created while loading
-    expect(result.current.readyCount).toBe(0);
+    const dispatchSpy = jest.spyOn(store, "dispatch");
+
+    renderHookWithStore(() => useViewpointWarming(), { store });
+
+    // The hook must bail out early when loading=true even though the item
+    // would otherwise be eligible. No warming thunk should be dispatched.
+    const warmingDispatches = dispatchSpy.mock.calls.filter((call) => {
+      const action = call[0] as unknown;
+      const type =
+        typeof action === "function"
+          ? "thunk"
+          : (action as { type?: string })?.type;
+      return type === "thunk";
+    });
+    expect(warmingDispatches).toHaveLength(0);
   });
 
   it("should not process items when search results are empty", () => {
@@ -148,22 +172,45 @@ describe("useViewpointWarming - effect behavior", () => {
   it("should skip items without viewable image assets", () => {
     (hasViewableImageAsset as jest.Mock).mockReturnValue(false);
 
+    const baseState = createTestStore().getState();
     const store = createTestStore({
       dataCatalog: {
-        ...createTestStore().getState().dataCatalog,
-        searchResults: {
-          features: [{ id: "item-1", assets: {} }],
-          loading: false,
-          totalCount: 1,
-          error: null
+        ...baseState.dataCatalog,
+        search: {
+          ...baseState.dataCatalog.search,
+          results: {
+            features: [
+              {
+                id: "item-1",
+                type: "Feature",
+                geometry: null,
+                properties: { datetime: null },
+                assets: {}
+              }
+            ] as never,
+            loading: false,
+            totalCount: 1,
+            error: null
+          }
         }
       }
-    } as never);
-
-    const { result } = renderHookWithStore(() => useViewpointWarming(), {
-      store
     });
-    expect(result.current.readyCount).toBe(0);
+
+    const dispatchSpy = jest.spyOn(store, "dispatch");
+
+    renderHookWithStore(() => useViewpointWarming(), { store });
+
+    // hasViewableImageAsset returns false for this item, so no warming
+    // thunk should be dispatched.
+    const warmingDispatches = dispatchSpy.mock.calls.filter((call) => {
+      const action = call[0] as unknown;
+      const type =
+        typeof action === "function"
+          ? "thunk"
+          : (action as { type?: string })?.type;
+      return type === "thunk";
+    });
+    expect(warmingDispatches).toHaveLength(0);
   });
 
   it("should skip items that already have viewpoints", () => {

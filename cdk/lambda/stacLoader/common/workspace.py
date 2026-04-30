@@ -1,5 +1,6 @@
 #  Copyright 2025 Amazon.com, Inc. or its affiliates.
-#  Copied from osml-geo-agents for consistent STAC item handling.
+#  Implements the STAC item layout and workspace conventions shared with
+#  osml-geo-agents so items written by either system are interoperable.
 
 import json
 import logging
@@ -83,25 +84,26 @@ class Workspace:
                 item_data = json.loads(f.read().decode("utf-8"))
                 return Item.from_dict(item_data)
         except Exception as e:
-            raise Exception(f"Failed to retrieve item from filesystem: {str(e)}") from e
+            raise RuntimeError(f"Failed to retrieve item from filesystem: {str(e)}") from e
 
     def list_items(self) -> List[STACReference]:
+        stac_refs: List[STACReference] = []
+        stac_dir = f"{self.prefix}/stac"
         try:
-            stac_refs: List[STACReference] = []
-            stac_dir = f"{self.prefix}/stac"
-            try:
-                if self.filesystem.exists(stac_dir):
-                    dirs = self.filesystem.ls(stac_dir, detail=True)
-                    dirs = [d for d in dirs if d.get("type", None) == "directory"]
-                    for directory in dirs:
-                        dir_path = directory["name"]
-                        self._process_directory(dir_path, [], stac_refs)
-            except FileNotFoundError:
-                pass
-            return stac_refs
+            if self.filesystem.exists(stac_dir):
+                dirs = self.filesystem.ls(stac_dir, detail=True)
+                dirs = [d for d in dirs if d.get("type", None) == "directory"]
+                for directory in dirs:
+                    dir_path = directory["name"]
+                    self._process_directory(dir_path, [], stac_refs)
+        except FileNotFoundError:
+            # A missing STAC directory is expected for a new/empty workspace.
+            # In that case, return an empty list of references.
+            pass
         except Exception as e:
             logger.warning(f"Error listing items: {str(e)}")
-            raise Exception(f"Failed to list items: {str(e)}")
+            raise RuntimeError(f"Failed to list items: {str(e)}") from e
+        return stac_refs
 
     def _process_directory(self, dir_path: str, current_collections: List[str], stac_refs: List[STACReference]) -> None:
         item_json_path = f"{dir_path}/item.json"
@@ -125,10 +127,12 @@ class Workspace:
                     new_collections.append(subdir_name)
                     self._process_directory(subdir_path, new_collections, stac_refs)
         except FileNotFoundError:
-            pass
+            # Directory may have been removed between listing steps
+            # (race/eventual consistency); skip it.
+            logger.debug(f"Directory disappeared while listing items: {dir_path}")
         except Exception as e:
             logger.warning(f"Error listing items: {str(e)}")
-            raise Exception(f"Failed to list items: {str(e)}")
+            raise RuntimeError(f"Failed to list items: {str(e)}") from e
 
     def delete_item(self, stac_ref: STACReference) -> None:
         item_path = self._get_stac_item_base_path(stac_ref.item_id, stac_ref.collections)
@@ -140,7 +144,7 @@ class Workspace:
                 logger.warning(f"No objects found for item {stac_ref}")
         except Exception as e:
             logger.warning(f"Error deleting item {stac_ref}: {str(e)}")
-            raise Exception(f"Failed to delete item {stac_ref}: {str(e)}")
+            raise RuntimeError(f"Failed to delete item {stac_ref}: {str(e)}") from e
 
     def create_item(
         self, item: Item, temp_assets: Optional[Dict[str, Path]], collections: Optional[List[str]] = None
@@ -177,7 +181,7 @@ class Workspace:
                     item.add_asset(asset_key, Asset(href=asset_url))
                 except Exception as e:
                     logger.warning(f"Error uploading {asset_key}: {str(e)}")
-                    raise Exception(f"Failed to upload asset {asset_key}: {str(e)}")
+                    raise RuntimeError(f"Failed to upload asset {asset_key}: {str(e)}") from e
 
         item_json_path = f"{item_base_path}/item.json"
         item_json = json.dumps(item.to_dict())
@@ -187,7 +191,7 @@ class Workspace:
                 f.write(item_json)
         except Exception as e:
             logger.warning(f"\nError uploading {item_json_path}: {str(e)}")
-            raise Exception(f"Failed to upload item JSON: {str(e)}")
+            raise RuntimeError(f"Failed to upload item JSON: {str(e)}") from e
 
         return STACReference.from_parts(item_id=item.id, collections=collections)
 
@@ -229,7 +233,7 @@ class Workspace:
                     item.add_asset(asset_key, Asset(href=asset_url))
                 except Exception as e:
                     logger.warning(f"Error uploading {asset_key}: {str(e)}")
-                    raise Exception(f"Failed to upload asset {asset_key}: {str(e)}")
+                    raise RuntimeError(f"Failed to upload asset {asset_key}: {str(e)}") from e
 
         item_json_path = f"{item_base_path}/item.json"
         item_json = json.dumps(item.to_dict())
@@ -239,7 +243,7 @@ class Workspace:
                 f.write(item_json)
         except Exception as e:
             logger.warning(f"\nError uploading {item_json_path}: {str(e)}")
-            raise Exception(f"Failed to upload item JSON: {str(e)}")
+            raise RuntimeError(f"Failed to upload item JSON: {str(e)}") from e
 
         return STACReference.from_parts(item_id=item.id, collections=collections)
 

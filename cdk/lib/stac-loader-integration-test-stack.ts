@@ -12,6 +12,7 @@ import {
 import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { DockerImageCode, DockerImageFunction } from "aws-cdk-lib/aws-lambda";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
+import { NagSuppressions } from "cdk-nag";
 import { Construct } from "constructs";
 import { join } from "path";
 
@@ -98,6 +99,21 @@ export class StacLoaderIntegrationTestStack extends Stack {
         )
       ]
     });
+
+    // Lambda-in-VPC ENI lifecycle requires EC2 network interface CRUD actions.
+    // AWSLambdaVPCAccessExecutionRole is the AWS-published minimal grant for
+    // this scope (CreateNetworkInterface / DescribeNetworkInterfaces /
+    // DeleteNetworkInterface); no customer-managed equivalent exists.
+    NagSuppressions.addResourceSuppressions(testRole, [
+      {
+        id: "AwsSolutions-IAM4",
+        appliesTo: [
+          "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+        ],
+        reason:
+          "The Lambda execution role needs network-interface create/describe/delete permissions to run inside the STAC Loader VPC. AWSLambdaVPCAccessExecutionRole grants exactly that scoped set of EC2 ENI-lifecycle actions (CreateNetworkInterface, DescribeNetworkInterfaces, DeleteNetworkInterface) scoped to the lambda.amazonaws.com service-role path; no customer-managed equivalent exists, and narrowing further would break the Lambda VPC attachment contract required by this integration test stack."
+      }
+    ]);
 
     // Build Docker image from the stacLoader directory using Dockerfile.integ
     const testImageCode = DockerImageCode.fromImageAsset(

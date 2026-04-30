@@ -125,7 +125,12 @@ class TestMCPTestClientCallTool:
         asyncio.run(run())
 
     def test_call_returns_error_on_validation_failure(self):
-        """Validation errors from load_stac_items should be returned directly."""
+        """Validation errors from load_stac_items should raise MCPTestClientError.
+
+        _start_load_job is documented to raise when the tool response contains
+        an 'error' key (e.g. invalid fetch_assets value), so call_load_stac_items
+        surfaces those as MCPTestClientError for callers to handle.
+        """
         client = MCPTestClient("http://localhost:8080")
 
         error_response = self._make_mock_tool_response({"error": "Invalid fetch_assets value"})
@@ -149,12 +154,11 @@ class TestMCPTestClientCallTool:
                     "tests.integration.test_client.ClientSession",
                     return_value=mock_session,
                 ):
-                    result = await client.call_load_stac_items(
-                        urls=["https://example.com/item.json"],
-                        fetch_assets="invalid",
-                    )
-
-            assert "error" in result
+                    with pytest.raises(MCPTestClientError, match="Invalid fetch_assets value"):
+                        await client.call_load_stac_items(
+                            urls=["https://example.com/item.json"],
+                            fetch_assets="invalid",
+                        )
 
         asyncio.run(run())
 

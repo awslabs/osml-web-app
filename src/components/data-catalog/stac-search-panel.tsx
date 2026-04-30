@@ -49,10 +49,10 @@ export const StacSearchPanel = ({ className }: StacSearchPanelProps) => {
 
   // Load collections on mount
   useEffect(() => {
-    if (collections.data.length === 0 && !collections.loading) {
+    if (!collections.hasLoaded && !collections.loading) {
       dispatch(fetchCollections());
     }
-  }, [dispatch, collections.data.length, collections.loading]);
+  }, [dispatch, collections.hasLoaded, collections.loading]);
 
   // Update local state when filters change
   useEffect(() => {

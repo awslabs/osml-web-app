@@ -49,11 +49,23 @@ const testReducers = {
 };
 
 /**
- * Create a fresh test store with all reducers.
+ * Root state type derived from the test reducer map. Use for typing
+ * preloaded state and selectors in tests.
  */
-export function createTestStore() {
+export type RootState = {
+  [K in keyof typeof testReducers]: ReturnType<(typeof testReducers)[K]>;
+};
+
+/**
+ * Create a fresh test store with all reducers.
+ *
+ * @param preloadedState Optional partial state to seed specific slices.
+ * Slices that are not provided use their reducer's default initial state.
+ */
+export function createTestStore(preloadedState?: Partial<RootState>) {
   return configureStore({
-    reducer: testReducers
+    reducer: testReducers,
+    preloadedState: preloadedState as RootState | undefined
   });
 }
 

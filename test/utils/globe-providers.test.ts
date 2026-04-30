@@ -37,6 +37,8 @@ jest.mock("cesium", () => {
   };
 });
 
+import type { ProviderViewModel } from "cesium";
+
 import {
   generateImageryProviders,
   generateProviderViewModels,
@@ -96,7 +98,9 @@ describe("globe-providers", () => {
 describe("globe-providers - creationFunction coverage", () => {
   it("imagery provider view model creationFunction should call ArcGisMapServerImageryProvider.fromUrl", () => {
     const models = generateProviderViewModels();
-    const worldImagery = models.find((m) => m.name === "World Imagery");
+    const worldImagery = models.find((m) => m.name === "World Imagery") as
+      | (ProviderViewModel & { creationFunction: () => unknown })
+      | undefined;
     expect(worldImagery).toBeDefined();
 
     // Call the creationFunction to cover the inner function
@@ -106,7 +110,9 @@ describe("globe-providers - creationFunction coverage", () => {
 
   it("terrain provider view model creationFunction should create EllipsoidTerrainProvider", () => {
     const models = generateTerrainProviderViewModels();
-    const ellipsoid = models.find((m) => m.name === "WGS84 Ellipsoid");
+    const ellipsoid = models.find((m) => m.name === "WGS84 Ellipsoid") as
+      | (ProviderViewModel & { creationFunction: () => unknown })
+      | undefined;
     expect(ellipsoid).toBeDefined();
 
     // Call the creationFunction to cover the inner function

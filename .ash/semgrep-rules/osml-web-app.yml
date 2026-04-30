@@ -1,0 +1,129 @@
+rules:
+  - id: nag-suppression-requires-reason
+    message: NagSuppressions entries must include a non-empty reason
+    severity: ERROR
+    languages: [typescript]
+    paths:
+      include:
+        - "cdk/**/*.ts"
+      exclude:
+        - "cdk/test/**"
+        - "cdk/**/*.test.ts"
+    pattern-either:
+      - pattern: 'NagSuppressions.addResourceSuppressions(..., [{..., reason: "", ...}], ...)'
+      - pattern: 'NagSuppressions.addStackSuppressions(..., [{..., reason: "", ...}], ...)'
+      - pattern: 'NagSuppressions.addResourceSuppressionsByPath(..., [{..., reason: "", ...}], ...)'
+
+  - id: fetch-call-without-timeout
+    message: |
+      fetch() calls in services and API routes should specify an AbortSignal.timeout
+      (or equivalent) to prevent hanging requests on SSR/edge runtimes.
+    severity: WARNING
+    languages: [typescript]
+    paths:
+      include:
+        - "src/services/**"
+        - "src/app/api/**"
+    patterns:
+      - pattern-either:
+          - pattern: "fetch($URL)"
+          - pattern: "fetch($URL, $OPTS)"
+      - pattern-not: "fetch($URL, {..., signal: ..., ...})"
+      - pattern-not: "fetch($URL, {..., timeout: ..., ...})"
+
+  - id: python-requests-without-timeout
+    message: |
+      requests.* calls in Lambda handlers must specify a timeout to prevent
+      the function from hanging until the Lambda hard timeout.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "cdk/lambda/**/*.py"
+      exclude:
+        - "cdk/lambda/**/.tox/**"
+        - "cdk/lambda/**/__pycache__/**"
+        - "cdk/lambda/**/htmlcov/**"
+        - "cdk/lambda/**/conda/**"
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(...)
+          - pattern: requests.post(...)
+          - pattern: requests.put(...)
+          - pattern: requests.delete(...)
+          - pattern: requests.patch(...)
+          - pattern: requests.request(...)
+      - pattern-not: requests.get(..., timeout=..., ...)
+      - pattern-not: requests.post(..., timeout=..., ...)
+      - pattern-not: requests.put(..., timeout=..., ...)
+      - pattern-not: requests.delete(..., timeout=..., ...)
+      - pattern-not: requests.patch(..., timeout=..., ...)
+      - pattern-not: requests.request(..., timeout=..., ...)
+
+  - id: no-print-of-token-or-secret
+    message: |
+      Do not print/log raw tokens, secrets, or credential material from Lambda
+      handlers. This leaks to CloudWatch Logs.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "cdk/lambda/**/*.py"
+      exclude:
+        - "cdk/lambda/**/.tox/**"
+        - "cdk/lambda/**/__pycache__/**"
+        - "cdk/lambda/**/htmlcov/**"
+        - "cdk/lambda/**/conda/**"
+        - "cdk/lambda/**/test/**"
+        - "cdk/lambda/**/tests/**"
+        - "cdk/lambda/**/test_*.py"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: print($X)
+              - pattern: logger.info($X)
+              - pattern: logger.debug($X)
+              - pattern: logger.warning($X)
+              - pattern: logger.error($X)
+              - pattern: logging.info($X)
+              - pattern: logging.debug($X)
+          - metavariable-regex:
+              metavariable: $X
+              regex: '^(id_token|access_token|refresh_token|bearer_token|secret|password|client_secret|api_key|jwt|signing_key)$'
+
+  - id: no-console-log-of-secret-response
+    message: Do not log values that may contain secrets or auth tokens
+    severity: ERROR
+    languages: [typescript]
+    paths:
+      include:
+        - "src/**"
+        - "cdk/lambda/**"
+    pattern-either:
+      - pattern: "console.log(..., $X.SecretString, ...)"
+      - pattern: "console.log(..., $X.password, ...)"
+      - pattern: "console.log(..., $X.access_token, ...)"
+      - pattern: "console.log(..., $X.id_token, ...)"
+      - pattern: "console.log(..., $X.refresh_token, ...)"
+      - pattern: "console.log(..., $X.clientSecret, ...)"
+
+  - id: no-http-only-auth-url
+    message: |
+      Authentication/authority URLs must use https. Plain http:// for OIDC or
+      auth endpoints is a critical security issue.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - "src/**"
+        - "cdk/**"
+      exclude:
+        - "cdk/lambda/**/.tox/**"
+        - "**/node_modules/**"
+        - "**/cdk.out/**"
+        - "**/.next/**"
+        - "**/coverage/**"
+        - "**/htmlcov/**"
+        - "**/*.test.ts"
+        - "**/test/**"
+    pattern-regex: '"http://[^"]*(\.well-known/openid-configuration|/oauth2/|/realms/|/auth/|/token)'

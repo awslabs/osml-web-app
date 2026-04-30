@@ -7,9 +7,7 @@ Tests HTTP, HTTPS, and S3 URL detection as well as invalid URL formats.
 _Requirements: 2.1, 2.2_
 """
 
-from fetcher import FetchResult
-
-detect_protocol = FetchResult.detect_protocol
+from fetcher import detect_protocol
 
 
 def test_detect_http():

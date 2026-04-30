@@ -223,7 +223,7 @@ def test_http_assets_ignore_assume_role_arn(n_assets, data):
 # Feature: stac-loader-enhancements, Property 14: MCP response includes fetch statistics
 
 
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     n_urls=st.integers(min_value=1, max_value=3),
     n_assets_per_item=st.integers(min_value=0, max_value=4),

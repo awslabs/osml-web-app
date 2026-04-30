@@ -21,6 +21,7 @@ import {
   HttpIntegration,
   IdentitySource,
   LogGroupLogDestination,
+  MethodLoggingLevel,
   RequestAuthorizer,
   ResponseType,
   RestApi,
@@ -62,12 +63,20 @@ import { Code, Function, Runtime } from "aws-cdk-lib/aws-lambda";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ARecord, HostedZone, RecordTarget } from "aws-cdk-lib/aws-route53";
 import { ApiGatewayDomain } from "aws-cdk-lib/aws-route53-targets";
-import { Bucket, BucketEncryption, IBucket } from "aws-cdk-lib/aws-s3";
+import {
+  BlockPublicAccess,
+  Bucket,
+  BucketEncryption,
+  IBucket
+} from "aws-cdk-lib/aws-s3";
 import { Provider } from "aws-cdk-lib/custom-resources";
+import { NagSuppressions } from "cdk-nag";
 import { Construct } from "constructs";
 import { join } from "path";
 
+import { WafConfig } from "../config/app-config";
 import { AuthConfig, AuthorizerFunction } from "./authorizer-function";
+import { WebAppWaf } from "./web-app-waf";
 
 /**
  * Configuration for the STAC Loader construct
@@ -131,6 +140,9 @@ export interface StacLoaderConstructProps {
 
   /** ACM certificate ARN for custom domain TLS (optional, created if not provided) */
   domainCertificateArn?: string;
+
+  /** WAFv2 configuration for the REST API stage (optional). */
+  wafConfig?: WafConfig;
 }
 
 export class StacLoaderConstruct extends Construct {
@@ -157,6 +169,7 @@ export class StacLoaderConstruct extends Construct {
 
     const retentionDays = props.config?.retentionDays ?? 7;
     const stackId = Stack.of(this).stackName;
+    const account = Stack.of(this).account;
     const mcpServerCpu = props.mcpServerCpu ?? 2048;
     const mcpServerMemorySize = props.mcpServerMemorySize ?? 4096;
     const mcpServerPort = props.mcpServerPort ?? 8080;
@@ -192,7 +205,6 @@ export class StacLoaderConstruct extends Construct {
         logGroup: lifecycleMergerLogGroup,
         code: Code.fromInline(`
 import boto3
-import json
 import cfnresponse
 
 s3 = boto3.client("s3")
@@ -200,28 +212,8 @@ s3 = boto3.client("s3")
 def handler(event, context):
     try:
         bucket = event["ResourceProperties"]["BucketName"]
-        rule_id = event["ResourceProperties"]["RuleId"]
-        prefix = event["ResourceProperties"]["Prefix"]
-        expiration_days = int(event["ResourceProperties"]["ExpirationDays"])
-
-        request_type = event["RequestType"]
-
-        if request_type == "Delete":
-            try:
-                resp = s3.get_bucket_lifecycle_configuration(Bucket=bucket)
-                rules = [r for r in resp.get("Rules", []) if r.get("ID") != rule_id]
-                if rules:
-                    s3.put_bucket_lifecycle_configuration(
-                        Bucket=bucket,
-                        LifecycleConfiguration={"Rules": rules}
-                    )
-                else:
-                    s3.delete_bucket_lifecycle(Bucket=bucket)
-            except s3.exceptions.ClientError as e:
-                if "NoSuchLifecycleConfiguration" not in str(e):
-                    raise
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-            return
+        rules_in = event["ResourceProperties"].get("Rules", [])
+        managed_ids = {r["RuleId"] for r in rules_in}
 
         existing_rules = []
         try:
@@ -231,18 +223,33 @@ def handler(event, context):
             if "NoSuchLifecycleConfiguration" not in str(e):
                 raise
 
-        merged = [r for r in existing_rules if r.get("ID") != rule_id]
-        merged.append({
-            "ID": rule_id,
-            "Status": "Enabled",
-            "Filter": {"Prefix": prefix},
-            "Expiration": {"Days": expiration_days}
-        })
+        # Drop any rules we manage so we can rewrite them (or remove them on Delete).
+        preserved = [r for r in existing_rules if r.get("ID") not in managed_ids]
 
-        s3.put_bucket_lifecycle_configuration(
-            Bucket=bucket,
-            LifecycleConfiguration={"Rules": merged}
-        )
+        if event["RequestType"] == "Delete":
+            merged = preserved
+        else:
+            merged = preserved + [
+                {
+                    "ID": r["RuleId"],
+                    "Status": "Enabled",
+                    "Filter": {"Prefix": r["Prefix"]},
+                    "Expiration": {"Days": int(r["ExpirationDays"])}
+                }
+                for r in rules_in
+            ]
+
+        if merged:
+            s3.put_bucket_lifecycle_configuration(
+                Bucket=bucket,
+                LifecycleConfiguration={"Rules": merged}
+            )
+        else:
+            try:
+                s3.delete_bucket_lifecycle(Bucket=bucket)
+            except s3.exceptions.ClientError as e:
+                if "NoSuchLifecycleConfiguration" not in str(e):
+                    raise
 
         cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
     except Exception as e:
@@ -273,25 +280,59 @@ def handler(event, context):
         serviceToken: lifecycleProvider.serviceToken,
         properties: {
           BucketName: props.config.workspaceBucketName,
-          RuleId: "stac-loader-cleanup",
-          Prefix: "stac/",
-          ExpirationDays: retentionDays.toString()
-        }
-      });
-
-      new CustomResource(this, "DatasetsBucketLifecycle", {
-        serviceToken: lifecycleProvider.serviceToken,
-        properties: {
-          BucketName: props.config.workspaceBucketName,
-          RuleId: "stac-loader-datasets-cleanup",
-          Prefix: "datasets/",
-          ExpirationDays: retentionDays.toString()
+          Rules: [
+            {
+              RuleId: "stac-loader-cleanup",
+              Prefix: "stac/",
+              ExpirationDays: retentionDays.toString()
+            },
+            {
+              RuleId: "stac-loader-datasets-cleanup",
+              Prefix: "datasets/",
+              ExpirationDays: retentionDays.toString()
+            }
+          ]
         }
       });
     } else {
+      // Access-log bucket receives server access logs from the workspace
+      // bucket. It has to sit next to the workspace bucket so that the
+      // workspace bucket can point its logging prefix at it.
+      const workspaceAccessLogsBucket = new Bucket(
+        this,
+        "WorkspaceBucketAccessLogs",
+        {
+          bucketName: `${stackId.toLowerCase()}-workspace-access-logs-${account}`,
+          encryption: BucketEncryption.S3_MANAGED,
+          blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+          versioned: true,
+          enforceSSL: true,
+          removalPolicy: removalPolicy,
+          lifecycleRules: [{ expiration: Duration.days(90) }]
+        }
+      );
+      // The access-log bucket is itself an S3 bucket, so the S1 rule fires
+      // against it too. Turning server access logs on for the access-log
+      // bucket would route its own access events back into itself, creating
+      // an infinite logging loop. The bucket has public access blocked,
+      // versioning enabled, SSL enforced, and S3-managed encryption, so its
+      // security posture already matches the target configuration for an
+      // access-log sink.
+      NagSuppressions.addResourceSuppressions(workspaceAccessLogsBucket, [
+        {
+          id: "AwsSolutions-S1",
+          reason:
+            "This bucket is the target of server access logs for WorkspaceBucket. Enabling server access logs on the access-log bucket itself would cause its own access events to be written back into the same bucket and create an infinite logging recursion. The bucket has public access blocked, versioning enabled, SSL enforced, and S3-managed encryption, so the security posture required by this rule is already in place without a further logging layer."
+        }
+      ]);
+
       const bucket = new Bucket(this, "WorkspaceBucket", {
-        bucketName: `${stackId.toLowerCase()}-stac-loader-workspace`,
+        bucketName: `${stackId.toLowerCase()}-workspace-${account}`,
         encryption: BucketEncryption.S3_MANAGED,
+        blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+        enforceSSL: true,
+        serverAccessLogsBucket: workspaceAccessLogsBucket,
+        serverAccessLogsPrefix: "workspace/",
         removalPolicy: removalPolicy,
         lifecycleRules: [
           {
@@ -338,6 +379,25 @@ def handler(event, context):
         })
       }
     });
+
+    // The task role grants S3 object-level actions under `${bucketArn}/*` so
+    // the MCP server can read, write, and delete STAC items and datasets at
+    // any key inside the workspace bucket. Individual object keys are not
+    // known at synth time because the MCP server chooses keys at runtime
+    // based on the incoming request. The action set is limited to three
+    // object-level operations, and the resource prefix is constrained to
+    // the workspace bucket itself.
+    NagSuppressions.addResourceSuppressions(
+      taskRole,
+      [
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "The MCP server task reads, writes, and deletes STAC items and datasets at object keys inside the workspace bucket that are chosen at runtime based on the incoming request. The wildcard matches only keys under this single bucket ARN, and the action set is limited to s3:GetObject, s3:PutObject, and s3:DeleteObject so the grant cannot reach any other bucket or action."
+        }
+      ],
+      true
+    );
 
     const executionRole = new Role(this, "MCPServerExecutionRole", {
       assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
@@ -396,6 +456,31 @@ def handler(event, context):
       }
     );
 
+    // The container `environment` entries are non-sensitive deployment-time
+    // constants that the MCP server reads at startup:
+    //   - HOST is the bind address (0.0.0.0 so the task is reachable
+    //     through the internal ALB; this is also the only place 0.0.0.0
+    //     is specified — the server's in-process default is 127.0.0.1);
+    //   - PORT mirrors mcpServerPort so the container, ALB target group,
+    //     and health check agree on a single value;
+    //   - WORKSPACE_BUCKET_NAME is the public logical name of the workspace
+    //     bucket (bucket names are globally discoverable by design);
+    //   - AWS_DEFAULT_REGION is the well-known AWS region identifier;
+    //   - DATA_CATALOG_BASE_URL is the public URL of the internal data
+    //     catalog that the server calls through with the caller's bearer
+    //     token — not a credential or secret.
+    // None of these values carry secret material, so routing them through
+    // Secrets Manager or SSM Parameter Store would add an unnecessary IAM
+    // grant and an extra fetch round-trip at container start without any
+    // security benefit.
+    NagSuppressions.addResourceSuppressions(taskDefinition, [
+      {
+        id: "AwsSolutions-ECS2",
+        reason:
+          "The container environment variables (HOST, PORT, WORKSPACE_BUCKET_NAME, AWS_DEFAULT_REGION, DATA_CATALOG_BASE_URL) are non-sensitive deployment-time constants: a bind address, a port number, a bucket name that is globally discoverable by design, a well-known AWS region string, and the public URL of the data catalog that the server reaches with the caller's bearer token. Routing them through Secrets Manager or SSM Parameter Store would add IAM grants and a fetch round-trip at container start without protecting any secret material."
+      }
+    ]);
+
     const containerDefinition = taskDefinition.addContainer(
       "MCPServerContainer",
       {
@@ -415,6 +500,14 @@ def handler(event, context):
           mode: AwsLogDriverMode.NON_BLOCKING
         }),
         environment: {
+          // HOST=0.0.0.0 is required here so the server binds to the Fargate
+          // task ENI and is reachable through the internal (non-internet-
+          // facing) ALB. Exposure is controlled by the task security group
+          // and the private subnet placement — not by the bind address. The
+          // server's in-process default is 127.0.0.1 (safe for local dev),
+          // so this explicit override is the only place 0.0.0.0 is set.
+          HOST: "0.0.0.0",
+          PORT: String(mcpServerPort),
           WORKSPACE_BUCKET_NAME: this.workspaceBucket.bucketName,
           AWS_DEFAULT_REGION: Stack.of(this).region,
           ...(props.dataCatalogBaseUrl
@@ -449,6 +542,70 @@ def handler(event, context):
 
     this.alb = new ApplicationLoadBalancer(this, "MCPServerALB", albProps);
 
+    // Access-log bucket for the ALB and NLB. ELB/NLB access logs are
+    // written by AWS's service principal, which requires an S3 bucket
+    // that permits PutObject from the ELB delivery logs service. CDK's
+    // `logAccessLogs` helper takes care of attaching the necessary bucket
+    // policy on our behalf. The bucket is scoped to ELB log delivery so
+    // there is no reason to enable versioning (ELB log objects are
+    // immutable and delivered once), and S3-managed encryption satisfies
+    // encryption-at-rest without introducing a KMS dependency that the
+    // ELB delivery service would have to be granted on.
+    const loadBalancerAccessLogsBucket = new Bucket(
+      this,
+      "LoadBalancerAccessLogs",
+      {
+        bucketName: `${stackId.toLowerCase()}-lb-access-logs-${account}`,
+        encryption: BucketEncryption.S3_MANAGED,
+        blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+        enforceSSL: true,
+        removalPolicy: removalPolicy,
+        lifecycleRules: [{ expiration: Duration.days(90) }]
+      }
+    );
+    // The access-log bucket is itself an S3 bucket, so the S1 rule fires
+    // against it. Enabling server access logs on an access-log bucket
+    // would route its own access events into itself and create an
+    // infinite logging loop. Public access is blocked, SSL is enforced,
+    // and S3-managed encryption is in place, so the security posture
+    // already matches the target configuration for a log-delivery sink.
+    NagSuppressions.addResourceSuppressions(loadBalancerAccessLogsBucket, [
+      {
+        id: "AwsSolutions-S1",
+        reason:
+          "This bucket is the delivery target for ALB and NLB access logs. Enabling server access logs on the access-log bucket itself would cause its own access events to be written back into the same bucket and create an infinite logging recursion. The bucket has public access blocked, SSL enforced, and S3-managed encryption, so the security posture required by this rule is already in place without a further logging layer."
+      }
+    ]);
+
+    // Route ALB access logs to the delivery bucket so every request that
+    // reaches the listener produces an audit record with the caller CIDR,
+    // request path, target response code, and latency.
+    this.alb.logAccessLogs(loadBalancerAccessLogsBucket, "alb");
+
+    // When no explicit security group is provided, the ALB construct
+    // creates a default security group whose listener-port ingress rule
+    // opens 0.0.0.0/0 because that is the default the elbv2 L2 emits for
+    // any ALB listener. The ALB is deployed with internetFacing: false
+    // and attached only to PRIVATE_WITH_EGRESS subnets, so that default
+    // rule reaches only workloads already inside the VPC. Narrowing the
+    // ingress CIDR would also prevent the AWS-managed NLB-to-ALB routing
+    // used by the AlbArnTarget that this stack wires up from API Gateway
+    // → VPC Link → NLB → ALB → Fargate; AWS routes that traffic through
+    // its own internal fabric and the ALB's security group must accept
+    // the listener port from the VPC as a whole. Downstream deployments
+    // that need a tighter ingress CIDR can pass an explicit security
+    // group through the construct's `securityGroup` prop.
+    const albSecurityGroup = this.alb.connections.securityGroups[0];
+    if (albSecurityGroup) {
+      NagSuppressions.addResourceSuppressions(albSecurityGroup, [
+        {
+          id: "AwsSolutions-EC23",
+          reason:
+            "This security group protects an internal ApplicationLoadBalancer (internetFacing: false) that is attached only to PRIVATE_WITH_EGRESS subnets and receives traffic exclusively from a NetworkLoadBalancer via AlbArnTarget on the API Gateway → VPC Link → NLB → ALB → Fargate path. The listener-port ingress rule that cdk-nag flags is never reachable from the public internet because the ALB has no public IP, and narrowing the CIDR would block AWS-managed NLB-to-ALB traffic on that same listener port. Callers that need a tighter CIDR can pass an explicit security group via the construct's `securityGroup` prop."
+        }
+      ]);
+    }
+
     this.fargateService = new ApplicationLoadBalancedFargateService(
       this,
       "MCPServerService",
@@ -464,6 +621,31 @@ def handler(event, context):
         taskSubnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS },
         loadBalancer: this.alb
       }
+    );
+
+    // ECR GetAuthorizationToken does not accept a resource ARN in its
+    // policy statement and requires Resource: * per the ECR service
+    // contract; the same is true for BatchCheckLayerAvailability,
+    // GetDownloadUrlForLayer, and BatchGetImage when called against the
+    // ECR authorization endpoint. ECS task execution roles must grant
+    // those actions so Fargate can pull the task container image. The
+    // grant is scoped to the four ECR read actions needed for image
+    // pull; no ECR write or registry admin actions are allowed. The
+    // suppression is applied after the Fargate service is created so
+    // both the inline policy on the role itself and the CDK-managed
+    // default policy that the service attaches to the execution role
+    // are visible as children at the time of propagation.
+    NagSuppressions.addResourceSuppressions(
+      executionRole,
+      [
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "ECR GetAuthorizationToken, BatchCheckLayerAvailability, GetDownloadUrlForLayer, and BatchGetImage must be granted with Resource: * because the ECR authorization endpoint does not accept a resource ARN in the policy statement. The grant is the set of actions Fargate needs to pull the task container image, with no ECR write actions and no registry admin actions in the statement.",
+          appliesTo: ["Resource::*"]
+        }
+      ],
+      true
     );
 
     this.fargateService.targetGroup.configureHealthCheck({
@@ -486,6 +668,11 @@ def handler(event, context):
       crossZoneEnabled: true,
       securityGroups: []
     });
+
+    // Emit NLB access logs to the shared load-balancer log bucket so every
+    // TCP connection handled by the NLB produces an audit record alongside
+    // the ALB logs above.
+    nlb.logAccessLogs(loadBalancerAccessLogsBucket, "nlb");
 
     const nlbListener = nlb.addListener("NLBListener", {
       port: 80,
@@ -557,7 +744,14 @@ def handler(event, context):
           responseLength: true,
           status: true,
           user: true
-        })
+        }),
+        // Enable method-level CloudWatch execution logging at INFO.
+        // dataTraceEnabled stays false so request/response bodies are not
+        // written to logs, which would otherwise risk capturing sensitive
+        // payload data that transits this API.
+        loggingLevel: MethodLoggingLevel.INFO,
+        dataTraceEnabled: false,
+        metricsEnabled: true
       },
       endpointTypes: [EndpointType.REGIONAL],
       defaultMethodOptions: {
@@ -589,6 +783,39 @@ def handler(event, context):
             }
           : undefined
     });
+
+    // Attach a request validator so every method under this RestApi
+    // validates parameters and bodies before the backend integration
+    // runs. Without this explicit validator the synthesized template
+    // does not contain a CfnRequestValidator resource and the APIG2
+    // rule treats the API as missing input validation.
+    this.restApi.addRequestValidator("DefaultRequestValidator", {
+      requestValidatorName: `${stackId}-StacLoader-DefaultRequestValidator`,
+      validateRequestBody: true,
+      validateRequestParameters: true
+    });
+
+    // API Gateway auto-creates a CloudWatchRole when stage-level CloudWatch
+    // logging is enabled on a RestApi. The role is scoped to API Gateway's
+    // own service principal, and AWS publishes AmazonAPIGatewayPushToCloudWatchLogs
+    // as the recommended grant for that role. Replacing the managed policy
+    // with an inline customer-managed copy would duplicate the same
+    // permissions and drift whenever AWS updates the action set.
+    const apiGatewayCloudWatchRole = this.restApi.node.tryFindChild(
+      "CloudWatchRole"
+    ) as Role | undefined;
+    if (apiGatewayCloudWatchRole) {
+      NagSuppressions.addResourceSuppressions(apiGatewayCloudWatchRole, [
+        {
+          id: "AwsSolutions-IAM4",
+          reason:
+            "The AmazonAPIGatewayPushToCloudWatchLogs managed policy is attached to the role that API Gateway assumes when pushing execution and access logs to CloudWatch Logs. This role is auto-created by the RestApi construct whenever stage-level logging is enabled, and the managed policy is the configuration AWS publishes for this exact purpose.",
+          appliesTo: [
+            "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+          ]
+        }
+      ]);
+    }
 
     const nlbUrl = `http://${nlb.loadBalancerDnsName}`;
 
@@ -662,6 +889,51 @@ def handler(event, context):
         authorizationType: AuthorizationType.CUSTOM
       });
     }
+
+    // Every method on this RestApi is guarded by the custom Lambda-based
+    // JWT authorizer attached through defaultMethodOptions and explicitly
+    // re-applied on each root method and on the {proxy+} method. The API
+    // is not fronted by a Cognito User Pool because authentication is
+    // delegated to the project's Keycloak OIDC instance, so COG4 does not
+    // apply to these methods. APIG3 (WAFv2 web ACL requirement) is
+    // suppressed only when WAF is disabled via wafConfig; when WAF is
+    // enabled below the stage is associated with a WebACL and APIG3 no
+    // longer fires.
+    const wafEnabled = props.wafConfig?.enabled !== false;
+    if (wafEnabled) {
+      const stageArn = Stack.of(this).formatArn({
+        service: "apigateway",
+        account: "",
+        resource: "/restapis",
+        resourceName: `${this.restApi.restApiId}/stages/${this.restApi.deploymentStage.stageName}`
+      });
+      new WebAppWaf(this, "RestApiWaf", {
+        resourceArn: stageArn,
+        namePrefix: `${props.projectName}-stac-loader-api`,
+        isProd: props.isProd,
+        requestsPer5Min: props.wafConfig?.requestsPer5Min
+      });
+    }
+
+    const stacLoaderSuppressions = [
+      {
+        id: "AwsSolutions-COG4",
+        reason:
+          "This API is intentionally fronted by a custom Lambda-based JWT authorizer that validates OIDC tokens issued by the project Keycloak instance. Cognito User Pools are not part of the authentication architecture for this deployment, so COG4 does not apply to the methods on this API. Every method wires the custom authorizer via defaultMethodOptions and re-applies it on the root and {proxy+} methods."
+      }
+    ];
+    if (!wafEnabled) {
+      stacLoaderSuppressions.push({
+        id: "AwsSolutions-APIG3",
+        reason:
+          "WAFv2 web ACL integration is disabled for this deployment via wafConfig.enabled=false. Access control is enforced by the custom JWT authorizer on every method, CloudWatch access logs are enabled on the deployment stage with caller/IP/path/status fields, and method-level execution logging at INFO is enabled to provide an audit trail for abuse investigation."
+      });
+    }
+    NagSuppressions.addResourceSuppressions(
+      this.restApi,
+      stacLoaderSuppressions,
+      true
+    );
 
     // CORS gateway responses for error cases
     if (corsOrigins.length > 0) {
