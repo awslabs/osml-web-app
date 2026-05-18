@@ -2,6 +2,54 @@
 require("@testing-library/jest-dom");
 require("jest-canvas-mock");
 
+// Mock next/font/google — Next's font loader can't run in jsdom because it
+// performs build-time-only operations. Returning a stub with the same shape
+// (className, variable, style) lets components that consume the font work in
+// tests without changes.
+jest.mock("next/font/google", () => ({
+  Inter: () => ({
+    className: "mock-inter",
+    variable: "--font-sans",
+    style: { fontFamily: "Inter" }
+  }),
+  Fira_Code: () => ({
+    className: "mock-fira-code",
+    variable: "--font-mono",
+    style: { fontFamily: "Fira Code" }
+  })
+}));
+
+// Hermetic siteConfig for tests so values don't depend on the developer's
+// shell or .env.local. Individual tests can override with a file-level
+// jest.mock.
+jest.mock("@/config/site", () => ({
+  siteConfig: {
+    name: "OversightML",
+    description:
+      "View and process large scale satellite and aerial images in the cloud.",
+    links: {
+      github: "",
+      docs: ""
+    },
+    tile_server_base_url: "",
+    stac_catalog_url: "",
+    stac_loader_mcp_url: "",
+    model_runner_api_base_url: "",
+    utility_api_base_url: "",
+    mcp: {
+      default_server_url: "http://localhost:3001",
+      geo_agents_url: "",
+      timeout: 10000,
+      reconnect_interval: 5000
+    },
+    detection_bridge_bucket: "",
+    kinesis_stream_name: "",
+    chat: {
+      tool_call_limit: 20
+    }
+  }
+}));
+
 // Mock next-auth/react to prevent fetch issues in tests
 jest.mock("next-auth/react", () => ({
   getSession: jest.fn(() => Promise.resolve({ accessToken: "mock-token" })),

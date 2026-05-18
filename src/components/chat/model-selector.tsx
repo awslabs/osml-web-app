@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon
@@ -19,6 +18,7 @@ import {
   fetchAvailableModels,
   setSelectedModel
 } from "@/store/slices/bedrock-model-slice";
+import { setPreferredModel } from "@/store/slices/settings-slice";
 
 interface ModelSelectorProps {
   isConnected: boolean;
@@ -56,23 +56,12 @@ export const ModelSelector = ({
       : null;
 
     dispatch(setSelectedModel(model));
+    dispatch(
+      setPreferredModel(
+        model ? { modelId: model.modelId, modelName: model.modelName } : null
+      )
+    );
   };
-
-  // Common refresh button component
-  const RefreshButton = () => (
-    <Button
-      isIconOnly
-      aria-label="Refresh models"
-      className="min-w-unit-8 w-unit-8 h-unit-8 flex-shrink-0"
-      color="primary"
-      isDisabled={isLoading}
-      size="sm"
-      variant="light"
-      onPress={() => dispatch(fetchAvailableModels())}
-    >
-      <ArrowPathIcon className="h-4 w-4" />
-    </Button>
-  );
 
   // Consistent layout with refresh button always on the right
   return (
@@ -174,7 +163,18 @@ export const ModelSelector = ({
       </div>
 
       {/* Always present refresh button on the right */}
-      <RefreshButton />
+      <Button
+        isIconOnly
+        aria-label="Refresh models"
+        className="min-w-unit-8 w-unit-8 h-unit-8 flex-shrink-0"
+        color="primary"
+        isDisabled={isLoading}
+        size="sm"
+        variant="light"
+        onPress={() => dispatch(fetchAvailableModels())}
+      >
+        <ArrowPathIcon className="h-4 w-4" />
+      </Button>
     </div>
   );
 };

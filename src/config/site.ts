@@ -1,5 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates.
+import { getRuntimeConfig } from "@/config/runtime-config";
+
 export type SiteConfig = typeof siteConfig;
+
+const runtime = getRuntimeConfig();
 
 export const siteConfig = {
   name: "OversightML",
@@ -10,32 +14,20 @@ export const siteConfig = {
       "https://github.com/aws-solutions-library-samples/guidance-for-processing-overhead-imagery-on-aws",
     docs: "https://heroui.com"
   },
-  tile_server_base_url: process.env.NEXT_PUBLIC_TILE_SERVER_URL || "",
-  stac_catalog_url: process.env.NEXT_PUBLIC_STAC_CATALOG_URL || "",
-  stac_loader_mcp_url: process.env.NEXT_PUBLIC_STAC_LOADER_MCP_URL || "",
-  model_runner_api_base_url: process.env.NEXT_PUBLIC_MODEL_RUNNER_API_URL || "",
-  utility_api_base_url: process.env.NEXT_PUBLIC_UTILITY_API_URL || "",
+  tile_server_base_url: runtime.tileServerUrl,
+  stac_catalog_url: runtime.stacCatalogUrl,
+  stac_loader_mcp_url: runtime.stacLoaderMcpUrl,
+  model_runner_api_base_url: runtime.modelRunnerApiUrl,
+  utility_api_base_url: runtime.utilityApiUrl,
   mcp: {
-    default_server_url:
-      process.env.NEXT_PUBLIC_MCP_SERVER_URL || "http://localhost:3001",
-    geo_agents_url: process.env.NEXT_PUBLIC_GEO_AGENTS_MCP_URL || "",
+    default_server_url: runtime.mcpServerUrl,
+    geo_agents_url: runtime.geoAgentsMcpUrl,
     timeout: 10000,
     reconnect_interval: 5000
   },
-  bedrock: {
-    model_id:
-      process.env.NEXT_PUBLIC_BEDROCK_MODEL_ID ||
-      "us.anthropic.claude-opus-4-6-v1",
-    region: process.env.NEXT_PUBLIC_AWS_REGION || "us-east-1",
-    max_tokens: 4000
-  },
-  detection_bridge_bucket:
-    process.env.NEXT_PUBLIC_DETECTION_BRIDGE_BUCKET || "",
-  kinesis_stream_name: process.env.NEXT_PUBLIC_KINESIS_STREAM_NAME || "",
+  detection_bridge_bucket: runtime.detectionBridgeBucket,
+  kinesis_stream_name: runtime.kinesisStreamName,
   chat: {
-    tool_call_limit: parseInt(
-      process.env.NEXT_PUBLIC_TOOL_CALL_LIMIT || "20",
-      10
-    )
+    tool_call_limit: parseInt(runtime.toolCallLimit, 10)
   }
 };

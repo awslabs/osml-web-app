@@ -130,12 +130,20 @@ describe("BedrockModelSlice - Property-Based Tests", () => {
               reducer: { bedrockModel: bedrockModelReducer }
             });
             store.dispatch(
-              fetchAvailableModels.fulfilled(initialModels, "test", undefined)
+              fetchAvailableModels.fulfilled(
+                { models: initialModels, preferredModelId: null } as never,
+                "test",
+                undefined
+              )
             );
             const selectedModel = initialModels[0];
             store.dispatch(setSelectedModel(selectedModel));
             store.dispatch(
-              fetchAvailableModels.fulfilled(newModels, "test", undefined)
+              fetchAvailableModels.fulfilled(
+                { models: newModels, preferredModelId: null } as never,
+                "test",
+                undefined
+              )
             );
             expect(store.getState().bedrockModel.selectedModel).toEqual(
               selectedModel

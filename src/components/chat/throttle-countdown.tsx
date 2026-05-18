@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import { ClockIcon } from "@heroicons/react/24/outline";
 import { Chip } from "@heroui/chip";
 import { useEffect, useState } from "react";

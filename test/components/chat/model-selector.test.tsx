@@ -41,7 +41,13 @@ describe("ModelSelector", () => {
 
   it("should show 'No Models Available' when list is empty", () => {
     const store = createTestStore();
-    store.dispatch(fetchAvailableModels.fulfilled([], "r", undefined));
+    store.dispatch(
+      fetchAvailableModels.fulfilled(
+        { models: [], preferredModelId: null } as never,
+        "r",
+        undefined
+      )
+    );
 
     renderWithStore(<ModelSelector isConnected={false} />, { store });
     expect(screen.getByText("No Models Available")).toBeInTheDocument();
@@ -64,7 +70,11 @@ describe("ModelSelector", () => {
       }
     ];
     store.dispatch(
-      fetchAvailableModels.fulfilled(models as never, "r", undefined)
+      fetchAvailableModels.fulfilled(
+        { models, preferredModelId: null } as never,
+        "r",
+        undefined
+      )
     );
 
     renderWithStore(<ModelSelector isConnected={false} />, { store });

@@ -57,6 +57,8 @@ import {
 import { createAuthenticatedTileLoader } from "@/utils/ol-tile-auth";
 
 export default function MapViewer() {
+  "use no memo";
+
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<OLMap | null>(null);
   const imageryLayers = useRef(new Map<string, TileLayer<XYZ>>());
@@ -84,11 +86,6 @@ export default function MapViewer() {
   const autoZoom = useAppSelector(selectAutoZoom);
   const mapSettings = useAppSelector(selectMapSettings);
 
-  // Ref to track latest features for use in map click handler without
-  // recreating the map on every feature change.
-  const featuresRef = useRef(features);
-  featuresRef.current = features;
-
   const { selectedJobs, layerStyles } = useAppSelector(
     (state) => state.jobs.selection
   );
@@ -101,7 +98,8 @@ export default function MapViewer() {
   );
   const layerOrder = useAppSelector((state) => state.overlay.layerOrder);
 
-  // Serialize layerStyles for stable dependency comparison
+  // Stabilize layerStyles by content hash so the layer-update effect below
+  // doesn't re-run on identity-only changes from Redux.
   const layerStylesRef = useRef(layerStyles);
   const layerStylesKey = JSON.stringify(layerStyles);
   const prevLayerStylesKey = useRef(layerStylesKey);
@@ -261,10 +259,12 @@ export default function MapViewer() {
         setSelectedFeature(feature);
         overlayRef.current?.setPosition(evt.coordinate);
 
-        // If this is an agent-drawn feature, update Redux selection
+        // If this is an agent-drawn feature, update Redux selection.
         const featureId = feature.get("id") as string | undefined;
+        const currentFeatures =
+          store.getState().overlay.inlineFeatures["agent-features"] ?? [];
 
-        if (featureId && featuresRef.current.find((f) => f.id === featureId)) {
+        if (featureId && currentFeatures.find((f) => f.id === featureId)) {
           dispatch(selectFeature(featureId));
         }
       } else {

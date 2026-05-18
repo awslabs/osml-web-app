@@ -13,7 +13,7 @@ import {
 } from "@heroui/modal";
 import { Switch } from "@heroui/switch";
 import { Tooltip } from "@heroui/tooltip";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { McpServerManagement } from "@/components/mcp/mcp-server-management";
@@ -58,10 +58,13 @@ export const McpServerManagementModal = ({
     disabledTools: []
   });
 
-  useEffect(() => {
+  // Reset form on add-server modal open.
+  const [wasAddServerOpen, setWasAddServerOpen] = useState(isAddServerOpen);
+  if (isAddServerOpen !== wasAddServerOpen) {
+    setWasAddServerOpen(isAddServerOpen);
     if (isAddServerOpen) {
       setFormData({
-        id: `mcp-server-${Date.now()}`,
+        id: "",
         name: "",
         url: "",
         description: "",
@@ -71,7 +74,7 @@ export const McpServerManagementModal = ({
         disabledTools: []
       });
     }
-  }, [isAddServerOpen]);
+  }
 
   const handleUpdateServers = (servers: McpServerConfig[]) => {
     servers.forEach((server) => {
@@ -220,7 +223,16 @@ export const McpServerManagementModal = ({
                 <Button
                   color="primary"
                   isDisabled={!formData.name || !formData.url}
-                  onPress={() => handleSaveServer(formData as McpServerConfig)}
+                  onPress={() =>
+                    handleSaveServer({
+                      ...(formData as McpServerConfig),
+                      // Generate the unique id at submit time rather than
+                      // during render, since calling Date.now() in the
+                      // render path is flagged as impure by the React
+                      // Compiler.
+                      id: formData.id || `mcp-server-${Date.now()}`
+                    })
+                  }
                 >
                   Add Server
                 </Button>

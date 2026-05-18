@@ -12,49 +12,61 @@ sequenceDiagram
     participant UD as UserData
     participant SYS as System
     participant S3 as S3 Artifacts
-    participant BUILD as Build Stage
     participant PROD as Production
 
     UD->>SYS: dnf update, install nginx, aws-cli
     UD->>SYS: Install NVM, Node.js 24, PM2
 
-    UD->>S3: aws s3 sync to /var/www/build/
-    UD->>BUILD: npm install
-    UD->>BUILD: Write .env.local (API URLs, auth)
-    UD->>BUILD: npm run build
+    UD->>S3: aws s3 sync to /var/www/html/
+    Note over UD,S3: Standalone bundle: server.js,<br/>node_modules, .next, public<br/>(no rebuild on instance)
 
-    UD->>PROD: Copy .next, public, package.json
-    UD->>PROD: npm install --omit=dev
-    UD->>PROD: Copy cesium assets
-
-    UD->>PROD: pm2 start ecosystem.config.js
+    UD->>PROD: Write ecosystem.config.js with<br/>runtime env vars (TILE_SERVER_URL, etc.)
+    UD->>PROD: pm2 start ecosystem.config.js<br/>(runs node server.js)
     UD->>PROD: systemctl start nginx
 
     Note over PROD: Health checks:<br/>curl localhost:3000<br/>curl localhost:80
 ```
 
-## Environment Variables (Build Time)
+## Runtime Configuration
 
-| Variable | Source | Description |
-|----------|--------|-------------|
-| `NEXT_PUBLIC_TILE_SERVER_URL` | deployment.json | Tile Server base URL |
-| `NEXT_PUBLIC_STAC_CATALOG_URL` | deployment.json | STAC Catalog API URL |
-| `NEXT_PUBLIC_STAC_LOADER_MCP_URL` | StacLoader stack | STAC Loader MCP server URL |
-| `NEXT_PUBLIC_UTILITY_API_URL` | WebAppUtility stack | Utility API Gateway URL |
-| `NEXT_PUBLIC_MODEL_RUNNER_API_URL` | ModelRunnerApi stack | Model Runner API Gateway URL |
-| `NEXT_PUBLIC_GEO_AGENTS_MCP_URL` | deployment.json | Geo Agents MCP server URL |
-| `NEXT_PUBLIC_DETECTION_BRIDGE_BUCKET` | WebAppUtility stack | Detection bridge S3 bucket name |
-| `NEXT_PUBLIC_OIDC_AUTHORITY` | deployment.json | OIDC authority URL |
-| `NEXTAUTH_URL` | deployment.json | NextAuth callback URL |
-| `NEXTAUTH_CLIENT_ID` | deployment.json | OIDC client ID |
-| `NEXTAUTH_SECRET` | deployment.json | NextAuth session secret |
+The Next.js build artifact is environment-agnostic: deployment-specific values are injected at server boot via `process.env` and exposed to the browser through the root layout.
+
+```mermaid
+%%{init: {'theme': 'base'}}%%
+flowchart LR
+    CDK[CDK config<br/>this.config.tileServerUrl, etc.] -->|UserData writes<br/>ecosystem.config.js env| PM2
+    PM2[PM2 ecosystem env] -->|process.env| SRV[Next.js server<br/>node server.js]
+    SRV -->|root layout reads<br/>env, injects script| HTML["&lt;script&gt;<br/>window.__OSML_CONFIG__=...<br/>&lt;/script&gt;"]
+    HTML -->|inline script runs<br/>at HTML parse time| WIN[window.__OSML_CONFIG__]
+    WIN -->|siteConfig reads| CLIENT[Client components]
+    SRV -->|server components<br/>read directly| RSC[Server-rendered code]
+```
+
+| Variable | Source | Visibility | Description |
+|----------|--------|------------|-------------|
+| `TILE_SERVER_URL` | deployment.json | client + server | Tile Server base URL |
+| `STAC_CATALOG_URL` | deployment.json | client + server | STAC Catalog API URL |
+| `STAC_LOADER_MCP_URL` | StacLoader stack | client + server | STAC Loader MCP server URL |
+| `UTILITY_API_URL` | WebAppUtility stack | client + server | Utility API Gateway URL |
+| `MODEL_RUNNER_API_URL` | ModelRunnerApi stack | client + server | Model Runner API Gateway URL |
+| `GEO_AGENTS_MCP_URL` | deployment.json | client + server | Geo Agents MCP server URL |
+| `DETECTION_BRIDGE_BUCKET` | WebAppUtility stack | client + server | Detection bridge S3 bucket name |
+| `KINESIS_STREAM_NAME` | deployment.json | client + server | Kinesis stream for detections |
+| `OIDC_AUTHORITY` | deployment.json | server only | OIDC authority URL (NextAuth) |
+| `NEXTAUTH_URL` | deployment.json | server only | NextAuth callback URL |
+| `NEXTAUTH_CLIENT_ID` | deployment.json | server only | OIDC client ID |
+| `NEXTAUTH_SECRET` | deployment.json | server only | NextAuth session secret |
+
+"Visibility" denotes whether a value is exposed in the browser via `window.__OSML_CONFIG__`. Server-only values are read directly from `process.env` by NextAuth and never appear in the page HTML.
 
 ## Deployment Modes
 
 | Mode | Config | Behavior |
 |------|--------|----------|
-| **Build from Source** | `buildFromSource: true` (default) | CDK bundles Next.js locally via `npm ci && npm run build:zip`, uploads to S3 |
-| **Build from URL** | `buildFromSource: false` + `artifactUrl` | Custom Resource Lambda downloads pre-built `build.zip` from URL to S3 |
+| **Build from Source** | `buildFromSource: true` (default) | CDK bundles Next.js locally via `npm ci && npm run build:zip`, which produces a standalone bundle, uploads it to S3 |
+| **Build from URL** | `buildFromSource: false` + `artifactUrl` | Custom Resource Lambda downloads a pre-built standalone `build.zip` from the URL to S3 |
+
+In both modes the artifact contents are the same: a self-contained Next.js standalone bundle (`server.js`, `.next/`, `node_modules/`, `public/`). The instance launches by syncing this bundle from S3 and running `node server.js` under PM2 — no `npm install` or `next build` happens on the instance.
 
 ## Instance Refresh
 

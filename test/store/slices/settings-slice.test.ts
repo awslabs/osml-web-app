@@ -5,11 +5,14 @@
 
 import { configureStore } from "@reduxjs/toolkit";
 
+import { DEFAULT_PREFERRED_MODEL } from "@/config/bedrock-defaults";
 import settingsReducer, {
   selectAutoZoom,
   selectGlobeSettings,
   selectMapSettings,
+  selectPreferredModel,
   setAutoZoom,
+  setPreferredModel,
   toggleAutoZoom,
   toggleFog,
   toggleGlobeLighting,
@@ -66,5 +69,37 @@ describe("settings-slice", () => {
 
     store.dispatch(toggleFog());
     expect(selectGlobeSettings(store.getState()).enableFog).toBe(false);
+  });
+
+  describe("preferredModel", () => {
+    it("should default to DEFAULT_PREFERRED_MODEL", () => {
+      const store = createStore();
+      expect(selectPreferredModel(store.getState())).toEqual(
+        DEFAULT_PREFERRED_MODEL
+      );
+    });
+
+    it("setPreferredModel should set a value", () => {
+      const store = createStore();
+      store.dispatch(
+        setPreferredModel({
+          modelId: "us.anthropic.claude-sonnet-4-5",
+          modelName: "Claude Sonnet 4.5"
+        })
+      );
+      expect(selectPreferredModel(store.getState())).toEqual({
+        modelId: "us.anthropic.claude-sonnet-4-5",
+        modelName: "Claude Sonnet 4.5"
+      });
+    });
+
+    it("setPreferredModel should clear with null", () => {
+      const store = createStore();
+      store.dispatch(
+        setPreferredModel({ modelId: "anything", modelName: "Anything" })
+      );
+      store.dispatch(setPreferredModel(null));
+      expect(selectPreferredModel(store.getState())).toBeNull();
+    });
   });
 });

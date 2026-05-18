@@ -170,7 +170,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
-- `npm run build:zip` - Build and package for deployment
+- `npm run build:zip` - Build a standalone bundle and zip it for deployment (runs `next build` with `output: "standalone"` then includes Cesium and Next.js static assets)
 - `npm start` - Start production server
 - `npm run lint` - Run ESLint with auto-fix
 - `npm test` - Run unit tests
@@ -266,6 +266,17 @@ The CDK deployment creates:
 - **ECS Fargate**: STAC Loader MCP server
 - **DynamoDB**: Job status tracking
 - **CloudWatch**: Logging and monitoring
+
+### Runtime Configuration
+
+The Next.js artifact is environment-agnostic — service URLs, the Bedrock model ID, and other client-visible settings are read from the EC2 instance environment at server boot rather than baked into the bundle.
+
+- **Source of truth**: PM2 ecosystem `env` block (set by the EC2 user-data script in `cdk/lib/constructs/web-ui-construct.ts`).
+- **Server**: `readRuntimeConfigFromEnv()` reads the values from `process.env`.
+- **Client**: the root layout serializes the runtime config and emits `<script>window.__OSML_CONFIG__=...</script>` into the SSR'd HTML head; `siteConfig` reads it at module load.
+- **Local dev**: same shape, but the values come from `.env.local` via `next dev`.
+
+Server-only secrets (`NEXTAUTH_SECRET`, `OIDC_AUTHORITY`) are read directly by the code that needs them and are never injected into the page HTML.
 
 ## Testing
 

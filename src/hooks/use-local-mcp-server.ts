@@ -1,5 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { getLocalMcpServer } from "@/services/local-mcp-server";
 import { useAppDispatch } from "@/store/hooks";
@@ -26,23 +26,28 @@ export function useLocalMcpServer() {
     );
   }, [localServer, dispatch]);
 
-  // Function to execute local tools
-  const executeLocalTool = async (
-    toolName: string,
-    args: Record<string, unknown>
-  ): Promise<unknown> => {
-    return await localServer.executeTool(toolName, args);
-  };
+  const executeLocalTool = useCallback(
+    async (
+      toolName: string,
+      args: Record<string, unknown>
+    ): Promise<unknown> => {
+      return await localServer.executeTool(toolName, args);
+    },
+    [localServer]
+  );
 
   // Check if a tool is handled locally
-  const isLocalTool = (toolName: string): boolean => {
-    return localServer.hasTool(toolName);
-  };
+  const isLocalTool = useCallback(
+    (toolName: string): boolean => {
+      return localServer.hasTool(toolName);
+    },
+    [localServer]
+  );
 
   // Get tools in format compatible with existing MCP system
-  const getLocalToolsForMcp = () => {
+  const getLocalToolsForMcp = useCallback(() => {
     return localServer.getToolsForMcpIntegration();
-  };
+  }, [localServer]);
 
   return {
     localServer,

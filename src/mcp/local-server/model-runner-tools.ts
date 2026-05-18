@@ -9,7 +9,14 @@
 import { Store } from "@reduxjs/toolkit";
 
 import {
+  DEFAULT_INCLUDE_KINESIS_OUTPUT,
+  DEFAULT_IOU_THRESHOLD,
+  DEFAULT_MODEL_TYPE,
   DEFAULT_RANGE_ADJUSTMENT,
+  DEFAULT_RESULT_OPACITY,
+  DEFAULT_SOFT_NMS_SIGMA,
+  DEFAULT_SOFT_NMS_SKIP_BOX_THRESHOLD,
+  DEFAULT_TILE_COMPRESSION,
   DEFAULT_TILE_FORMAT,
   DEFAULT_TILE_OVERLAP,
   DEFAULT_TILE_SIZE
@@ -21,13 +28,13 @@ import {
   isJobSuccessful
 } from "@/services/job-management";
 import { submitJob } from "@/services/job-submission";
+import { FeatureDistillation } from "@/services/model-runner-service";
 import { s3Service } from "@/services/s3-service";
 import { sagemakerService } from "@/services/sagemaker-service";
 import {
   JobSnapshot,
   removeJobOptimistically,
   restoreJob,
-  setLayerStyle,
   setSelectedJobs,
   VectorStyle
 } from "@/store/slices/jobs-slice";
@@ -45,11 +52,20 @@ interface SubmitJobArgs {
   image_url: string;
   model_endpoint_name: string;
   output_bucket: string;
+  model_type?: string;
   tile_size?: number;
   tile_overlap?: number;
   tile_format?: string;
+  tile_compression?: string;
   range_adjustment?: string;
   text_prompt?: string;
+  post_processing_algorithm?: "NMS" | "SOFT_NMS" | "NONE";
+  iou_threshold?: number;
+  soft_nms_sigma?: number;
+  soft_nms_skip_box_threshold?: number;
+  color?: string;
+  opacity?: number;
+  include_kinesis_output?: boolean;
   image_read_role?: string;
   model_invoke_role?: string;
   region_of_interest?: string;
@@ -62,8 +78,6 @@ interface GetJobStatusArgs {
 
 interface DisplayResultsArgs {
   job_id: string;
-  color?: string;
-  opacity?: number;
 }
 
 interface DeleteJobArgs {
@@ -437,6 +451,12 @@ export const submitImageProcessingJobTool: LocalMcpTool = {
         description:
           "S3 bucket name for storing processing results. Optional — defaults to the configured detection bridge bucket, or falls back to 'mr-bucket-sink-*' if available."
       },
+      model_type: {
+        type: "string",
+        default: DEFAULT_MODEL_TYPE,
+        description:
+          "Model invocation mode. Defaults to SageMaker endpoint invocation."
+      },
       tile_size: {
         type: "integer",
         default: DEFAULT_TILE_SIZE,
@@ -453,6 +473,11 @@ export const submitImageProcessingJobTool: LocalMcpTool = {
         default: DEFAULT_TILE_FORMAT,
         description: "Format for image tiles"
       },
+      tile_compression: {
+        type: "string",
+        default: DEFAULT_TILE_COMPRESSION,
+        description: "Compression for image tiles (e.g. 'NONE', 'JPEG')"
+      },
       range_adjustment: {
         type: "string",
         enum: ["NONE", "MINMAX", "DRA"],
@@ -463,6 +488,53 @@ export const submitImageProcessingJobTool: LocalMcpTool = {
         type: "string",
         description:
           "Text prompt for SAM3 models (e.g., 'vehicles', 'buildings')"
+      },
+      post_processing_algorithm: {
+        type: "string",
+        enum: ["NMS", "SOFT_NMS", "NONE"],
+        default: "NMS",
+        description:
+          "Post-processing algorithm to deduplicate overlapping detections. Defaults to NMS. Set to 'NONE' to skip deduplication."
+      },
+      iou_threshold: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        default: DEFAULT_IOU_THRESHOLD,
+        description:
+          "IoU threshold for NMS / SOFT_NMS deduplication (used only when post_processing_algorithm is NMS or SOFT_NMS)"
+      },
+      soft_nms_sigma: {
+        type: "number",
+        minimum: 0,
+        default: DEFAULT_SOFT_NMS_SIGMA,
+        description: "Sigma parameter for SOFT_NMS (ignored for NMS / NONE)"
+      },
+      soft_nms_skip_box_threshold: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        default: DEFAULT_SOFT_NMS_SKIP_BOX_THRESHOLD,
+        description: "Skip-box threshold for SOFT_NMS (ignored for NMS / NONE)"
+      },
+      color: {
+        type: "string",
+        description:
+          "Optional hex color for the resulting detection layer (e.g. '#44ff44'). When omitted, the next unused palette color is auto-assigned."
+      },
+      opacity: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        default: DEFAULT_RESULT_OPACITY,
+        description:
+          "Opacity (0-1) for the resulting detection layer. Only applied when `color` is also provided; otherwise the auto-assigned palette default is used."
+      },
+      include_kinesis_output: {
+        type: "boolean",
+        default: DEFAULT_INCLUDE_KINESIS_OUTPUT,
+        description:
+          "When true, results are written to both S3 and the Kinesis stream. When false, only S3."
       },
       image_read_role: {
         type: "string",
@@ -494,31 +566,86 @@ export const submitImageProcessingJobTool: LocalMcpTool = {
       image_url,
       model_endpoint_name,
       output_bucket,
+      model_type,
       tile_size,
       tile_overlap,
       tile_format,
+      tile_compression,
       range_adjustment,
       text_prompt,
+      post_processing_algorithm,
+      iou_threshold,
+      soft_nms_sigma,
+      soft_nms_skip_box_threshold,
+      color,
+      opacity,
+      include_kinesis_output,
       image_read_role,
       model_invoke_role,
       region_of_interest,
       feature_properties
     } = args as unknown as SubmitJobArgs;
+
+    // Build the post-processing array from the algorithm + threshold params.
+    let postProcessing: FeatureDistillation[] | undefined;
+    if (post_processing_algorithm === "NONE") {
+      postProcessing = [];
+    } else if (post_processing_algorithm === "SOFT_NMS") {
+      postProcessing = [
+        {
+          step: "FEATURE_DISTILLATION",
+          algorithm: {
+            algorithm_type: "SOFT_NMS",
+            iouThreshold: iou_threshold ?? DEFAULT_IOU_THRESHOLD,
+            sigma: soft_nms_sigma ?? DEFAULT_SOFT_NMS_SIGMA,
+            skipBoxThreshold:
+              soft_nms_skip_box_threshold ?? DEFAULT_SOFT_NMS_SKIP_BOX_THRESHOLD
+          }
+        }
+      ];
+    } else if (
+      post_processing_algorithm === "NMS" ||
+      iou_threshold !== undefined
+    ) {
+      postProcessing = [
+        {
+          step: "FEATURE_DISTILLATION",
+          algorithm: {
+            algorithm_type: "NMS",
+            iouThreshold: iou_threshold ?? DEFAULT_IOU_THRESHOLD
+          }
+        }
+      ];
+    }
+    // else: leave undefined → submitJob applies DEFAULT_POST_PROCESSING.
+
+    // Result style is set only when the agent provided a color; otherwise
+    // fetchJobs auto-assigns from the palette.
+    const resultStyle =
+      color !== undefined
+        ? { color, opacity: opacity ?? DEFAULT_RESULT_OPACITY }
+        : undefined;
+
     const result = await submitJob(
       {
         jobName: job_name,
         imageUrl: image_url,
         modelEndpointName: model_endpoint_name,
+        modelType: model_type,
         outputBucket: output_bucket || undefined,
         tileSize: tile_size,
         tileOverlap: tile_overlap,
         tileFormat: tile_format,
+        tileCompression: tile_compression,
         rangeAdjustment: range_adjustment as
           | "NONE"
           | "MINMAX"
           | "DRA"
           | undefined,
         textPrompt: text_prompt,
+        postProcessing,
+        resultStyle,
+        includeKinesisOutput: include_kinesis_output,
         imageReadRole: image_read_role,
         modelInvokeRole: model_invoke_role,
         regionOfInterest: region_of_interest,
@@ -675,25 +802,13 @@ export const listImageProcessingJobsTool: LocalMcpTool = {
 export const displayDetectionResultsTool: LocalMcpTool = {
   name: "display_detection_results",
   description:
-    "Display detection results from a completed image processing job on the map. Fetches GeoJSON results and zooms to the detection extent.",
+    "Make a completed image processing job's detection layer visible on the map. Adds the job to the current selection without affecting other selected jobs. Use `style_layer` to change a layer's color or opacity.",
   schema: {
     type: "object",
     properties: {
       job_id: {
         type: "string",
         description: "The job ID whose results should be displayed"
-      },
-      color: {
-        type: "string",
-        default: "#ffff00",
-        description: "Color for detection results (hex format)"
-      },
-      opacity: {
-        type: "number",
-        minimum: 0,
-        maximum: 1,
-        default: 0.5,
-        description: "Opacity for detection results (0-1)"
       }
     },
     required: ["job_id"],
@@ -703,11 +818,7 @@ export const displayDetectionResultsTool: LocalMcpTool = {
     args: ToolArgs,
     store: Store
   ): Promise<DisplayResultsResponse> => {
-    const {
-      job_id,
-      opacity: rawOpacity,
-      color: rawColor
-    } = args as unknown as DisplayResultsArgs;
+    const { job_id } = args as unknown as DisplayResultsArgs;
     if (!job_id) {
       return {
         success: false,
@@ -739,21 +850,15 @@ export const displayDetectionResultsTool: LocalMcpTool = {
         };
       }
 
-      // Apply defaults for optional parameters
-      const color = rawColor ?? "#ffff00";
-      const opacity = rawOpacity ?? 0.5;
-
-      // Dispatch setLayerStyle FIRST to configure display style
-      store.dispatch(
-        setLayerStyle({
-          jobId: job_id,
-          style: { color, opacity }
-        })
+      // Add to existing selection without replacing it.
+      const stateBeforeUpdate = store.getState() as RootState;
+      const currentlySelected = stateBeforeUpdate.jobs.selection.selectedJobs;
+      const isAlreadySelected = currentlySelected.some(
+        (j) => j.job_id === job_id
       );
-
-      // Dispatch setSelectedJobs to trigger fetchDataMiddleware
-      // This will fetch both GeoJSON results and viewpoint data
-      store.dispatch(setSelectedJobs([job]));
+      if (!isAlreadySelected) {
+        store.dispatch(setSelectedJobs([...currentlySelected, job]));
+      }
 
       // Wait for viewpoint extent to be available (poll for up to 10 seconds)
       let extent:

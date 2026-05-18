@@ -67,7 +67,11 @@ describe("QuotaConfigModal", () => {
       }
     ];
     store.dispatch(
-      fetchAvailableModels.fulfilled(models as never, "r", undefined)
+      fetchAvailableModels.fulfilled(
+        { models, preferredModelId: null } as never,
+        "r",
+        undefined
+      )
     );
     store.dispatch(
       updateQuota({

@@ -31,7 +31,7 @@ function getClientId(): string {
  */
 async function refreshAccessToken(token: JWT): Promise<JWT> {
   try {
-    const url = `${process.env.NEXT_PUBLIC_OIDC_AUTHORITY}/protocol/openid-connect/token`;
+    const url = `${process.env.OIDC_AUTHORITY}/protocol/openid-connect/token`;
     const clientId = getClientId();
 
     const response = await fetch(url, {
@@ -76,7 +76,7 @@ export const authOptions: AuthOptions = {
       id: "oidc",
       name: "OIDC Provider",
       type: "oauth",
-      wellKnown: `${process.env.NEXT_PUBLIC_OIDC_AUTHORITY}/.well-known/openid-configuration`,
+      wellKnown: `${process.env.OIDC_AUTHORITY}/.well-known/openid-configuration`,
       clientId: process.env.NEXTAUTH_CLIENT_ID,
       authorization: {
         params: {

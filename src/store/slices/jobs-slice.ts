@@ -8,6 +8,7 @@ import {
 } from "@reduxjs/toolkit";
 import type { FeatureCollection } from "geojson";
 
+import { DEFAULT_RESULT_OPACITY } from "@/config/model-runner-defaults";
 import {
   dataCatalogService,
   StacSearchResponse
@@ -42,7 +43,7 @@ const VIEWPOINT_POLL_INTERVAL = 5000; // 5 seconds
 
 export const DEFAULT_RESULT_STYLE: VectorStyle = {
   color: CLASSIFICATION_PALETTE[0],
-  opacity: 0.5
+  opacity: DEFAULT_RESULT_OPACITY
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────────
