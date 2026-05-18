@@ -351,30 +351,6 @@ describe("useMultipleMcp - additional branch coverage", () => {
       ).rejects.toThrow(/not found/);
     });
   });
-
-  it("should return connectionStatesMap", () => {
-    const servers = [
-      {
-        id: "local",
-        name: "Local Viewport Server",
-        url: "local://viewport",
-        enabled: true,
-        connectionStatus: "active" as const,
-        autoApprovedTools: [] as string[],
-        disabledTools: [] as string[]
-      }
-    ];
-    const preferences = {
-      enabledServers: servers,
-      overrideAllApprovals: false
-    };
-
-    const { result } = renderHookWithStore(() =>
-      useMultipleMcp(servers, preferences, undefined, false)
-    );
-
-    expect(result.current.connectionStatesMap).toBeInstanceOf(Map);
-  });
 });
 
 describe("useToolApproval - additional branch coverage", () => {

@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
 import { FormEvent, KeyboardEvent, useState } from "react";

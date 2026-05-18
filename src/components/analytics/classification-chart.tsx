@@ -43,19 +43,17 @@ export const ClassificationChart: React.FC<ClassificationChartProps> = ({
   const sorted = [...labels].sort((a, b) => counts[b] - counts[a]);
   const total = sorted.reduce((sum, l) => sum + counts[l], 0);
 
-  // Build segments
-  let xOffset = 0;
-  const segments = sorted.map((label, i) => {
+  // Build segments with cumulative x offsets, computed declaratively to
+  // avoid mutating an outer-scope variable across map iterations (which the
+  // React Compiler flags as not safely memoizable).
+  const segments = sorted.reduce<
+    Array<{ label: string; x: number; width: number; color: string }>
+  >((acc, label, i) => {
+    const prev = acc[acc.length - 1];
+    const x = prev ? prev.x + prev.width : 0;
     const width = (counts[label] / total) * SVG_WIDTH;
-    const seg = {
-      label,
-      x: xOffset,
-      width,
-      color: PALETTE[i % PALETTE.length]
-    };
-    xOffset += width;
-    return seg;
-  });
+    return [...acc, { label, x, width, color: PALETTE[i % PALETTE.length] }];
+  }, []);
 
   const legendLabels = sorted.slice(0, MAX_LEGEND);
   const overflow = sorted.length - MAX_LEGEND;

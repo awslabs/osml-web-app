@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import {
   ChartBarIcon,
   ClockIcon,

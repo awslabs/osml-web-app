@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import { ArrowPathIcon, ClockIcon } from "@heroicons/react/16/solid";
 import { Button } from "@heroui/button";
 import { CircularProgress } from "@heroui/progress";
@@ -18,27 +17,27 @@ export const ThrottleRetryButton = ({
   isPermanent = false
 }: ThrottleRetryButtonProps) => {
   const [secondsRemaining, setSecondsRemaining] = useState(retryAfterSeconds);
-  const [canRetry, setCanRetry] = useState(retryAfterSeconds === 0);
+
+  // Sync the countdown to the latest retryAfterSeconds prop during render
+  // (not in an effect), per
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [retryAfterSecondsRef, setRetryAfterSecondsRef] =
+    useState(retryAfterSeconds);
+  if (retryAfterSecondsRef !== retryAfterSeconds) {
+    setRetryAfterSecondsRef(retryAfterSeconds);
+    setSecondsRemaining(retryAfterSeconds);
+  }
+
+  // Derived value: avoids the previous setState-in-effect pattern of
+  // mirroring the countdown finish into a separate `canRetry` flag.
+  const canRetry =
+    isPermanent || retryAfterSeconds === 0 || secondsRemaining === 0;
 
   useEffect(() => {
-    if (isPermanent || retryAfterSeconds === 0) {
-      setCanRetry(true);
-
-      return;
-    }
-
-    setSecondsRemaining(retryAfterSeconds);
+    if (isPermanent || retryAfterSeconds === 0) return;
 
     const interval = setInterval(() => {
-      setSecondsRemaining((prev) => {
-        if (prev <= 1) {
-          setCanRetry(true);
-
-          return 0;
-        }
-
-        return prev - 1;
-      });
+      setSecondsRemaining((prev) => Math.max(0, prev - 1));
     }, 1000);
 
     return () => clearInterval(interval);

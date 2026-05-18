@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import React, {
   useCallback,
   useEffect,
@@ -118,8 +117,11 @@ export const useMultipleMcp = (
     dispatchRef.current = dispatch;
   }, [dispatch]);
 
-  // Keep connectionStatesMap as state for failure detection reactivity
-  const [connectionStatesMap, setConnectionStatesMap] = useState<
+  // Snapshot of the tool→server mapping returned to consumers. The internal
+  // `toolToServerMapRef` is mutated in place by `handleToolsChange` for
+  // cheap accumulation; after each mutation we publish a fresh snapshot
+  // here so consumers see Map identity changes when contents change.
+  const [toolToServerMapState, setToolToServerMapState] = useState<
     Map<string, string>
   >(new Map());
 
@@ -146,31 +148,23 @@ export const useMultipleMcp = (
       .join("|");
   }, [enabledServers]);
 
-  // Ref to capture initial enabled servers for mount-only initialization
-  const enabledServersRef = useRef(enabledServers);
-  enabledServersRef.current = enabledServers;
-
-  // Refs for stable callback access without re-render dependencies
-  const mcpPreferencesRef = useRef(mcpPreferences);
-  mcpPreferencesRef.current = mcpPreferences;
-  const getLocalToolsForMcpRef = useRef(getLocalToolsForMcp);
-  getLocalToolsForMcpRef.current = getLocalToolsForMcp;
+  // Initial enabled server URLs, captured once at mount. The
+  // `updateMcpServerUrls` effect below handles subsequent changes.
+  const [initialEnabledServerUrls] = useState(() =>
+    enabledServers.map((server) => server.url)
+  );
 
   // Initialize fetch interceptor for MCP authentication (stable initialization)
   useEffect(() => {
-    const enabledServerUrls = enabledServersRef.current.map(
-      (server) => server.url
-    );
-
-    if (enabledServerUrls.length > 0) {
-      initMcpAuthInterceptor(enabledServerUrls);
+    if (initialEnabledServerUrls.length > 0) {
+      initMcpAuthInterceptor(initialEnabledServerUrls);
     }
 
     // Only cleanup on unmount, not on server changes
     return () => {
       cleanupMcpAuthInterceptor();
     };
-  }, []); // Initialize once, update URLs separately
+  }, [initialEnabledServerUrls]);
 
   // Update interceptor URLs when servers change (without cleanup)
   useEffect(() => {
@@ -181,83 +175,81 @@ export const useMultipleMcp = (
     }
   }, [serversHash, enabledServers]); // Now serversHash is defined above
 
-  // Stable callbacks with refs - no dependencies that change on every render
-  const handleToolsChange = useCallback((tools: Tool[], clientName: string) => {
-    const filteredTools = tools.filter(
-      (tool) =>
-        !mcpPreferencesRef.current?.enabledServers
-          ?.find((server) => server.name === clientName)
-          ?.disabledTools.includes(tool.name)
-    );
-
-    // Update refs directly
-    serverToolsMapRef.current.set(clientName, filteredTools);
-
-    // Update tool-to-server mapping
-    const toolToServerMap = toolToServerMapRef.current;
-
-    // Remove old mappings for this server
-    Array.from(toolToServerMap.entries()).forEach(([toolName, serverName]) => {
-      if (serverName === clientName) {
-        toolToServerMap.delete(toolName);
-      }
-    });
-    // Add new mappings
-    tools.forEach((tool) => {
-      if (tool.name) {
-        toolToServerMap.set(tool.name, clientName);
-      }
-    });
-
-    // Update tool count in Redux for UI display (store in server object)
-    // Only mark as "ready" when we actually have tools loaded
-    if (
-      dispatchRef.current &&
-      typeof dispatchRef.current === "function" &&
-      filteredTools.length > 0
-    ) {
-      const { updateServerLiveState } =
-        require("@/store/slices/mcp-slice") as typeof import("@/store/slices/mcp-slice");
-
-      dispatchRef.current(
-        updateServerLiveState({
-          serverName: clientName,
-          connectionState: "ready",
-          toolCount: filteredTools.length
-        })
+  // Invoked from McpConnection children when a server's tools list
+  // changes. Depends on `mcpPreferences` so preference changes
+  // immediately re-filter the tool list.
+  const handleToolsChange = useCallback(
+    (tools: Tool[], clientName: string) => {
+      const filteredTools = tools.filter(
+        (tool) =>
+          !mcpPreferences?.enabledServers
+            ?.find((server) => server.name === clientName)
+            ?.disabledTools.includes(tool.name)
       );
-    }
 
-    // Trigger re-render with updated tools (aggregated from ALL servers + local tools)
-    const externalTools = Array.from(serverToolsMapRef.current.values()).flat();
-    const localTools = getLocalToolsForMcpRef.current();
-    const combinedTools = [...externalTools, ...(localTools as Tool[])];
+      // Update refs directly
+      serverToolsMapRef.current.set(clientName, filteredTools);
 
-    // Add local tools to the tool-to-server mapping
-    localTools.forEach((tool) => {
-      if (tool.name) {
-        toolToServerMapRef.current.set(tool.name, "Local Viewport Server");
+      // Update tool-to-server mapping
+      const toolToServerMap = toolToServerMapRef.current;
+
+      // Remove old mappings for this server
+      Array.from(toolToServerMap.entries()).forEach(
+        ([toolName, serverName]) => {
+          if (serverName === clientName) {
+            toolToServerMap.delete(toolName);
+          }
+        }
+      );
+      // Add new mappings
+      tools.forEach((tool) => {
+        if (tool.name) {
+          toolToServerMap.set(tool.name, clientName);
+        }
+      });
+
+      // Update tool count in Redux for UI display (store in server object)
+      // Only mark as "ready" when we actually have tools loaded
+      if (
+        dispatchRef.current &&
+        typeof dispatchRef.current === "function" &&
+        filteredTools.length > 0
+      ) {
+        const { updateServerLiveState } =
+          require("@/store/slices/mcp-slice") as typeof import("@/store/slices/mcp-slice");
+
+        dispatchRef.current(
+          updateServerLiveState({
+            serverName: clientName,
+            connectionState: "ready",
+            toolCount: filteredTools.length
+          })
+        );
       }
-    });
 
-    setAllTools(combinedTools);
-  }, []); // Stable callback — uses refs for mutable dependencies
+      // Trigger re-render with updated tools (aggregated from ALL servers + local tools)
+      const externalTools = Array.from(
+        serverToolsMapRef.current.values()
+      ).flat();
+      const localTools = getLocalToolsForMcp();
+      const combinedTools = [...externalTools, ...(localTools as Tool[])];
+
+      // Add local tools to the tool-to-server mapping
+      localTools.forEach((tool) => {
+        if (tool.name) {
+          toolToServerMapRef.current.set(tool.name, "Local Viewport Server");
+        }
+      });
+
+      setAllTools(combinedTools);
+      setToolToServerMapState(new Map(toolToServerMapRef.current));
+    },
+    [mcpPreferences, getLocalToolsForMcp]
+  );
 
   const handleConnectionChange = useCallback(
     (connection: UseMcpResult, clientName: string) => {
-      // Update refs directly
       connectionsMapRef.current.set(clientName, connection);
-
-      // Track connection state - keep as state for failure detection reactivity
-      const connectionState = connection.state;
-
-      setConnectionStatesMap((prev) => {
-        const newMap = new Map(prev);
-
-        newMap.set(clientName, connectionState);
-
-        return newMap;
-      });
     },
     []
   );
@@ -318,10 +310,7 @@ export const useMultipleMcp = (
     tools: allTools,
     callTool,
     McpConnections: mcpConnections,
-    toolToServerMap: toolToServerMapRef.current,
-    serverToolsMap: serverToolsMapRef.current,
-    connectionsMap: connectionsMapRef.current,
-    connectionStatesMap: connectionStatesMap
+    toolToServerMap: toolToServerMapState
   };
 };
 

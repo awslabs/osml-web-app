@@ -1,5 +1,16 @@
 // Copyright Amazon.com, Inc. or its affiliates.
-import { configureStore } from "@reduxjs/toolkit";
+import { combineReducers, configureStore } from "@reduxjs/toolkit";
+import {
+  FLUSH,
+  PAUSE,
+  PERSIST,
+  persistReducer,
+  persistStore,
+  PURGE,
+  REGISTER,
+  REHYDRATE
+} from "redux-persist";
+import createWebStorage from "redux-persist/lib/storage/createWebStorage";
 
 import dataCatalogReducer from "@/store/slices/data-catalog-slice.ts";
 import imageViewerReducer from "@/store/slices/image-viewer-slice.ts";
@@ -20,31 +31,61 @@ import overlayReducer from "./slices/overlay-slice.ts";
 import settingsReducer from "./slices/settings-slice.ts";
 import viewportReducer from "./slices/viewport-slice.ts";
 
-export const store = configureStore({
-  reducer: {
-    analytics: analyticsReducer,
-    navbar: navbarReducer,
-    imageViewer: imageViewerReducer,
-    s3: s3Reducer,
-    jobs: jobsReducer,
-    imagery: imageryReducer,
-    mcp: mcpReducer,
-    bedrockModel: bedrockModelReducer,
-    bedrockThrottle: bedrockThrottleReducer,
-    bedrockQuota: bedrockQuotaReducer,
-    chatWidget: chatWidgetReducer,
-    chatSession: chatSessionReducer,
-    viewport: viewportReducer,
-    overlay: overlayReducer,
-    settings: settingsReducer,
-    dataCatalog: dataCatalogReducer,
-    sagemakerEndpoint: sagemakerEndpointReducer
+// Server-side: localStorage is not available, so redux-persist's getItem
+// resolves to null and setItem is a no-op. The client uses real localStorage.
+const createNoopStorage = () => ({
+  getItem: () => Promise.resolve<string | null>(null),
+  setItem: (_key: string, value: string) => Promise.resolve(value),
+  removeItem: () => Promise.resolve()
+});
+const storage =
+  typeof window !== "undefined"
+    ? createWebStorage("local")
+    : createNoopStorage();
+
+const rootReducer = combineReducers({
+  analytics: analyticsReducer,
+  navbar: navbarReducer,
+  imageViewer: imageViewerReducer,
+  s3: s3Reducer,
+  jobs: jobsReducer,
+  imagery: imageryReducer,
+  mcp: mcpReducer,
+  bedrockModel: bedrockModelReducer,
+  bedrockThrottle: bedrockThrottleReducer,
+  bedrockQuota: bedrockQuotaReducer,
+  chatWidget: chatWidgetReducer,
+  chatSession: chatSessionReducer,
+  viewport: viewportReducer,
+  overlay: overlayReducer,
+  settings: settingsReducer,
+  dataCatalog: dataCatalogReducer,
+  sagemakerEndpoint: sagemakerEndpointReducer
+});
+
+const persistedReducer = persistReducer(
+  {
+    key: "osml-root",
+    version: 1,
+    storage,
+    whitelist: ["settings"]
   },
+  rootReducer
+);
+
+export const store = configureStore({
+  reducer: persistedReducer,
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(fetchDataMiddleware),
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER]
+      }
+    }).concat(fetchDataMiddleware),
   devTools: process.env.NODE_ENV !== "production"
 });
 
-export type RootState = ReturnType<typeof store.getState>;
+export const persistor = persistStore(store);
+
+export type RootState = ReturnType<typeof rootReducer>;
 export type AppDispatch = typeof store.dispatch;
 export default store;

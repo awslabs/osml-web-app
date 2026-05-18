@@ -1,5 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates.
+// Copyright Amazon.com, Inc. or its affiliates.
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+
+import {
+  DEFAULT_PREFERRED_MODEL,
+  PreferredModelRef
+} from "@/config/bedrock-defaults";
+
+export type { PreferredModelRef };
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -26,6 +34,14 @@ export interface SettingsState {
   map: MapSettings;
   /** 3D globe-specific settings. */
   globe: GlobeSettings;
+  /**
+   * The user's preferred Bedrock model. Initialized to
+   * `DEFAULT_PREFERRED_MODEL`; overwritten when the user picks a model in
+   * the selector. When the preferred model's `modelId` matches an entry in
+   * the available-models list, it is selected automatically on app load.
+   * `null` indicates an explicit clearing of the preference.
+   */
+  preferredModel: PreferredModelRef | null;
 }
 
 // ─── Initial State ───────────────────────────────────────────────────────────
@@ -40,7 +56,8 @@ const initialState: SettingsState = {
     showGroundAtmosphere: true,
     showSkyAtmosphere: true,
     enableFog: true
-  }
+  },
+  preferredModel: { ...DEFAULT_PREFERRED_MODEL }
 };
 
 // ─── Slice ───────────────────────────────────────────────────────────────────
@@ -71,6 +88,12 @@ export const settingsSlice = createSlice({
     },
     toggleFog: (state) => {
       state.globe.enableFog = !state.globe.enableFog;
+    },
+    setPreferredModel: (
+      state,
+      action: PayloadAction<PreferredModelRef | null>
+    ) => {
+      state.preferredModel = action.payload;
     }
   }
 });
@@ -82,7 +105,8 @@ export const {
   toggleGlobeLighting,
   toggleGroundAtmosphere,
   toggleSkyAtmosphere,
-  toggleFog
+  toggleFog,
+  setPreferredModel
 } = settingsSlice.actions;
 
 // ─── Selectors ───────────────────────────────────────────────────────────────
@@ -95,5 +119,8 @@ export const selectMapSettings = (state: { settings: SettingsState }) =>
 
 export const selectGlobeSettings = (state: { settings: SettingsState }) =>
   state.settings.globe;
+
+export const selectPreferredModel = (state: { settings: SettingsState }) =>
+  state.settings.preferredModel;
 
 export default settingsSlice.reducer;

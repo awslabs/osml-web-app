@@ -2,6 +2,7 @@
 import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import { BedrockModel, bedrockModelsService } from "@/services/bedrock-service";
+import type { RootState } from "@/store/store";
 
 export interface BedrockModelState {
   availableModels: BedrockModel[];
@@ -21,14 +22,37 @@ const initialState: BedrockModelState = {
   connectionStatus: "disconnected"
 };
 
-// Async thunk to fetch available models
-export const fetchAvailableModels = createAsyncThunk(
+/**
+ * Pick the default Bedrock model from a list. When `preferredModelId` is
+ * present in `models`, returns that model; otherwise returns `models[0]`.
+ * Returns `null` when `models` is empty.
+ */
+export function selectDefaultBedrockModel(
+  models: BedrockModel[],
+  preferredModelId?: string | null
+): BedrockModel | null {
+  if (models.length === 0) return null;
+
+  if (preferredModelId) {
+    const preferred = models.find((m) => m.modelId === preferredModelId);
+    if (preferred) return preferred;
+  }
+
+  return models[0];
+}
+
+export const fetchAvailableModels = createAsyncThunk<
+  { models: BedrockModel[]; preferredModelId: string | null },
+  void,
+  { state: RootState; rejectValue: string }
+>(
   "bedrockModel/fetchAvailableModels",
-  async (_, { rejectWithValue }) => {
+  async (_, { getState, rejectWithValue }) => {
     try {
       const models = await bedrockModelsService.getAvailableModels();
-
-      return models;
+      const preferredModelId =
+        getState().settings.preferredModel?.modelId ?? null;
+      return { models, preferredModelId };
     } catch (error) {
       return rejectWithValue(
         error instanceof Error ? error.message : "Failed to fetch models"
@@ -51,7 +75,6 @@ const bedrockModelSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
-    // Connection status management
     setConnectionStatus: (
       state,
       action: PayloadAction<
@@ -60,7 +83,6 @@ const bedrockModelSlice = createSlice({
     ) => {
       state.connectionStatus = action.payload;
     },
-    // Clear models and selected model (useful on logout)
     clearModels: (state) => {
       state.availableModels = [];
       state.selectedModel = null;
@@ -69,25 +91,14 @@ const bedrockModelSlice = createSlice({
       state.isLoading = false;
       state.connectionStatus = "disconnected";
     },
-    // Set default model (typically Claude Opus 4.6 if available)
+    /**
+     * Seed `selectedModel` from `availableModels[0]` when nothing is
+     * selected. Does not consult the user preference; that path runs
+     * through `fetchAvailableModels.fulfilled`.
+     */
     setDefaultModel: (state) => {
-      if (state.availableModels.length > 0 && !state.selectedModel) {
-        // Prefer Claude Opus 4.6 if available
-        const claudeOpus46 = state.availableModels.find((model) =>
-          model.modelId.includes("claude-opus-4-6")
-        );
-
-        if (claudeOpus46) {
-          state.selectedModel = claudeOpus46;
-        } else {
-          // Fallback to first Claude model, then first available model
-          const claudeModel = state.availableModels.find((model) =>
-            model.modelId.includes("claude")
-          );
-
-          state.selectedModel = claudeModel || state.availableModels[0];
-        }
-      }
+      if (state.selectedModel) return;
+      state.selectedModel = selectDefaultBedrockModel(state.availableModels);
     }
   },
   extraReducers: (builder) => {
@@ -98,28 +109,17 @@ const bedrockModelSlice = createSlice({
         // Don't clear selected model during loading - preserve user's selection
       })
       .addCase(fetchAvailableModels.fulfilled, (state, action) => {
+        const { models, preferredModelId } = action.payload;
         state.isLoading = false;
-        state.availableModels = action.payload;
+        state.availableModels = models;
         state.lastFetched = Date.now();
         state.error = null;
 
-        // Auto-select default model if none selected
-        if (action.payload.length > 0 && !state.selectedModel) {
-          // Prefer Claude Opus 4.6 if available
-          const claudeOpus46 = action.payload.find((model) =>
-            model.modelId.includes("claude-opus-4-6")
+        if (!state.selectedModel) {
+          state.selectedModel = selectDefaultBedrockModel(
+            models,
+            preferredModelId
           );
-
-          if (claudeOpus46) {
-            state.selectedModel = claudeOpus46;
-          } else {
-            // Fallback to first Claude model, then first available model
-            const claudeModel = action.payload.find((model) =>
-              model.modelId.includes("claude")
-            );
-
-            state.selectedModel = claudeModel || action.payload[0];
-          }
         }
       })
       .addCase(fetchAvailableModels.rejected, (state, action) => {

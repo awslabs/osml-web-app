@@ -1,13 +1,17 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import "@/styles/globals.css";
 
+import clsx from "clsx";
 import { Metadata, Viewport } from "next";
 import { getServerSession } from "next-auth";
-import { ReactNode } from "react";
+import { CSSProperties, ReactNode } from "react";
 
 import { RootLayoutClient } from "@/app/layout-client";
 import { authOptions } from "@/auth/config";
+import { fontSans } from "@/config/fonts";
+import { readRuntimeConfigFromEnv } from "@/config/runtime-config";
 import { siteConfig } from "@/config/site";
+import { safeStringifyForScript } from "@/utils/safe-stringify";
 
 export const metadata: Metadata = {
   title: {
@@ -27,6 +31,10 @@ export const viewport: Viewport = {
   ]
 };
 
+const bodyStyle = {
+  "--navbar-height": "4rem"
+} as CSSProperties;
+
 export default async function RootLayout({
   children
 }: {
@@ -34,10 +42,31 @@ export default async function RootLayout({
 }) {
   let session = null;
 
-  // Only attempt to get session if auth is properly configured
   if (process.env.NEXTAUTH_SECRET && process.env.NEXTAUTH_CLIENT_ID) {
     session = await getServerSession(authOptions);
   }
 
-  return <RootLayoutClient session={session}>{children}</RootLayoutClient>;
+  // Inject runtime config into the SSR'd HTML head as
+  // `window.__OSML_CONFIG__` so module-load reads in `siteConfig` see a
+  // populated value before any client bundle runs.
+  const runtimeConfig = readRuntimeConfigFromEnv();
+  const runtimeConfigScript = `window.__OSML_CONFIG__=${safeStringifyForScript(runtimeConfig)}`;
+
+  return (
+    <html suppressHydrationWarning lang="en">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: runtimeConfigScript }} />
+      </head>
+      <body
+        suppressHydrationWarning
+        className={clsx(
+          "min-h-screen bg-background font-sans antialiased",
+          fontSans.variable
+        )}
+        style={bodyStyle}
+      >
+        <RootLayoutClient session={session}>{children}</RootLayoutClient>
+      </body>
+    </html>
+  );
 }

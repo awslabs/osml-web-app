@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import { getSession } from "next-auth/react";
 
+import { siteConfig } from "@/config/site";
+
 /**
  * Error thrown by AuthenticatedApiClient when the server returns a non-OK response.
  * Preserves the HTTP status, parsed response body, and original Response object.
@@ -167,17 +169,17 @@ export class AuthenticatedApiClient {
 
 // Create singleton instances for each API
 export const utilityApiClient = new AuthenticatedApiClient(
-  process.env.NEXT_PUBLIC_UTILITY_API_URL || ""
+  siteConfig.utility_api_base_url
 );
 
 export const modelRunnerApiClient = new AuthenticatedApiClient(
-  process.env.NEXT_PUBLIC_MODEL_RUNNER_API_URL || ""
+  siteConfig.model_runner_api_base_url
 );
 
 export const tileServerApiClient = new AuthenticatedApiClient(
-  process.env.NEXT_PUBLIC_TILE_SERVER_URL || ""
+  siteConfig.tile_server_base_url
 );
 
 export const dataCatalogApiClient = new AuthenticatedApiClient(
-  process.env.NEXT_PUBLIC_STAC_CATALOG_URL || ""
+  siteConfig.stac_catalog_url
 );

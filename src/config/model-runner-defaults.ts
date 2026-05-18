@@ -20,6 +20,10 @@ export const DEFAULT_RANGE_ADJUSTMENT: "NONE" | "MINMAX" | "DRA" = "DRA";
 export const DEFAULT_MODEL_TYPE = "SM_ENDPOINT";
 export const DEFAULT_INCLUDE_KINESIS_OUTPUT = true;
 
+// ─── Result-style defaults ───────────────────────────────────────────────────
+
+export const DEFAULT_RESULT_OPACITY = 0.5;
+
 // ─── Post-processing defaults ────────────────────────────────────────────────
 
 export const DEFAULT_IOU_THRESHOLD = 0.75;

@@ -15,7 +15,7 @@ import {
 } from "@heroui/modal";
 import { Switch } from "@heroui/switch";
 import { Tooltip } from "@heroui/tooltip";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 
 import { McpPreferences, McpServerConfig } from "@/hooks/use-mcp";
 import {
@@ -53,11 +53,13 @@ const McpServerForm: React.FC<McpServerFormProps> = ({
     disabledTools: []
   });
 
-  useEffect(() => {
-    // Reset form when modal opens/closes
+  // Reset form on modal open.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
     if (isOpen) {
       setFormData({
-        id: `mcp-server-${Date.now()}`,
+        id: "",
         name: "",
         url: "",
         description: "",
@@ -67,11 +69,18 @@ const McpServerForm: React.FC<McpServerFormProps> = ({
         disabledTools: []
       });
     }
-  }, [isOpen]);
+  }
 
   const handleSubmit = () => {
     if (formData.name && formData.url) {
-      onSave(formData as McpServerConfig);
+      // Generate a unique id at submit time rather than during render, since
+      // calling Date.now() during render is flagged as impure by the React
+      // Compiler.
+      const server: McpServerConfig = {
+        ...(formData as McpServerConfig),
+        id: formData.id || `mcp-server-${Date.now()}`
+      };
+      onSave(server);
       onOpenChange(false);
     }
   };

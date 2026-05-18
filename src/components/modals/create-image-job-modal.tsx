@@ -140,22 +140,31 @@ export const CreateJobModal = ({
 
   // ── Effects ──────────────────────────────────────────────────────────────
 
-  // Update the default color when the modal opens (palette may have changed)
-  useEffect(() => {
+  // Sync the default detection-result color to the next available palette
+  // color whenever the modal opens or the palette shifts while open.
+  const [openColorSnapshot, setOpenColorSnapshot] = useState({
+    isOpen,
+    paletteColor: nextPaletteColor
+  });
+  if (
+    openColorSnapshot.isOpen !== isOpen ||
+    openColorSnapshot.paletteColor !== nextPaletteColor
+  ) {
+    setOpenColorSnapshot({ isOpen, paletteColor: nextPaletteColor });
     if (isOpen) {
-      setSelectedStyle((prev) => ({
-        ...prev,
-        color: nextPaletteColor
-      }));
+      setSelectedStyle((prev) => ({ ...prev, color: nextPaletteColor }));
     }
-  }, [isOpen, nextPaletteColor]);
+  }
 
   useEffect(() => {
     if (isOpen) dispatch(fetchSageMakerEndpoints());
   }, [isOpen, dispatch]);
 
+  // Fetch buckets when the modal opens. The synchronous setBucketsLoading
+  // call is a legitimate "kick off async work on prop change" pattern.
   useEffect(() => {
     if (!isOpen) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBucketsLoading(true);
     Promise.all([s3Service.getBuckets(), resolveOutputBucket()])
       .then(([buckets, defaultBucket]) => {

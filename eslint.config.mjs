@@ -177,6 +177,21 @@ export default [
       "react/prop-types": "off",
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
+      // React Compiler rules from eslint-plugin-react-hooks v7+.
+      "react-hooks/static-components": "error",
+      "react-hooks/use-memo": "error",
+      "react-hooks/preserve-manual-memoization": "error",
+      "react-hooks/incompatible-library": "error",
+      "react-hooks/immutability": "error",
+      "react-hooks/globals": "error",
+      "react-hooks/refs": "error",
+      "react-hooks/set-state-in-effect": "error",
+      "react-hooks/error-boundaries": "error",
+      "react-hooks/purity": "error",
+      "react-hooks/set-state-in-render": "error",
+      "react-hooks/unsupported-syntax": "error",
+      "react-hooks/config": "error",
+      "react-hooks/gating": "error",
       // Accessibility rules
       "jsx-a11y/click-events-have-key-events": "warn",
       "jsx-a11y/interactive-supports-focus": "warn",
@@ -205,6 +220,18 @@ export default [
     files: ["test/**/*.ts", "test/**/*.tsx"],
     rules: {
       "import/no-namespace": ["error", { ignore: ["fast-check"] }],
+    },
+  },
+
+  // Files that opt out of the React Compiler via "use no memo". The
+  // patterns these rules flag (manual ref-stabilization, set-state in init
+  // effects, imperative library refs read during render) are intentional
+  // here and have been audited; disabling the rules keeps lint output clean.
+  {
+    files: ["src/app/globe/cesium.tsx", "src/app/map/map-viewer.tsx"],
+    rules: {
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 ];

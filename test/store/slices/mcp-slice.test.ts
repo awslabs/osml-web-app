@@ -27,8 +27,8 @@ describe("MCP Slice - Server Connection State", () => {
       const store = createStore();
       const state = store.getState();
 
-      // Default state has at least 1 enabled server (Local Viewport Server)
-      // May have 2 if NEXT_PUBLIC_GEO_AGENTS_MCP_URL is configured
+      // Default state has at least 1 enabled server (Local Viewport Server);
+      // a configured Geo Agents URL adds a second.
       expect(selectEnabledServersCount(state)).toBeGreaterThanOrEqual(1);
     });
   });

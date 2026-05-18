@@ -524,99 +524,43 @@ export class WebUIConstruct extends Construct {
       "chmod -R 777 /root/.pm2",
       "export PM2_HOME=/root/.pm2",
 
-      // Install symlink-dir (needed for some build processes)
-      "echo 'Installing symlink-dir'",
-      "npm install -g symlink-dir",
-
       // Disable NextJS telemetry
       "export NEXT_TELEMETRY_DISABLED=1",
 
-      // Setup build and application directories
+      // Setup application directory
       "echo 'Setting up directories'",
-      "mkdir -p /var/www/build",
       "mkdir -p /var/www/html",
-      "chmod -R 755 /var/www/build",
       "chmod -R 755 /var/www/html",
 
-      // Download application to build directory
+      // Download the prebuilt standalone server bundle directly into the
+      // application directory. The artifact is already extracted by the
+      // BucketDeployment construct, so this is a plain file sync. The bundle
+      // contains server.js, .next/, node_modules/, and public/ — everything
+      // needed to run; no `npm install` or `next build` is required on the
+      // instance because runtime configuration is injected via env vars.
       "echo 'Downloading application files...'",
-      "cd /var/www/build",
+      "cd /var/www/html",
       `aws s3 sync s3://${artifactBucket.bucketName}/current/ . --quiet`,
 
       // List contents to verify
-      "echo 'Contents of build directory:'",
-      "ls -la /var/www/build",
-
-      // Stage 1: Build
-      "echo 'Starting build stage'",
-      "cd /var/www/build",
-
-      // Install ALL dependencies for build with legacy peer deps
-      "echo 'Installing all dependencies for build'",
-      "npm install --legacy-peer-deps",
-
-      // Create production environment file
-      "rm /var/www/build/.env*",
-      "echo 'Creating production environment file'",
-      "cat << 'EOF' > /var/www/build/.env.local",
-      `NEXT_PUBLIC_TILE_SERVER_URL=${this.config.tileServerUrl || ""}`,
-      `NEXT_PUBLIC_STAC_CATALOG_URL=${this.config.stacCatalogUrl || ""}`,
-      `NEXT_PUBLIC_STAC_LOADER_MCP_URL=${this.config.stacLoaderMcpUrl || ""}`,
-      `NEXT_PUBLIC_UTILITY_API_URL=${this.config.webAppUtilityUrl || ""}`,
-      `NEXT_PUBLIC_MODEL_RUNNER_API_URL=${this.config.modelRunnerApiUrl || ""}`,
-      `NEXT_PUBLIC_GEO_AGENTS_MCP_URL=${this.config.geoAgentsMcpUrl || ""}`,
-      `NEXT_PUBLIC_DETECTION_BRIDGE_BUCKET=${this.config.detectionBridgeBucket || ""}`,
-      `NEXT_PUBLIC_KINESIS_STREAM_NAME=${this.config.kinesisStreamName || ""}`,
-      `NEXT_PUBLIC_OIDC_AUTHORITY=${this.config.authority || ""}`,
-      `NEXTAUTH_URL=${this.config.authSuccessUrl || ""}`,
-      `NEXTAUTH_CLIENT_ID=${this.config.authClientId || ""}`,
-      `NEXTAUTH_SECRET=${this.config.authSecret || ""}`,
-      "EOF",
-
-      // Rebuild the application with the new environment variables
-      "echo 'Rebuilding application with environment variables'",
-      "npm run build",
-
-      // Stage 2: Production Setup
-      "echo 'Starting production stage'",
-      "cd /var/www/html",
-
-      // Copy necessary files from build directory
-      "echo 'Copying production files'",
-      "cp -r /var/www/build/.next .",
-      "cp -r /var/www/build/public .",
-      "cp /var/www/build/package.json .",
-      "cp /var/www/build/package-lock.json .",
-      "cp /var/www/build/.env.local .",
-
-      // Install only production dependencies with legacy peer deps
-      "echo 'Installing production dependencies'",
-      "npm install --omit=dev --legacy-peer-deps",
-
-      // Recreate cesium assets after production npm install
-      "echo 'Setting up cesium assets for production'",
-      "rm -rf public/cesium",
-      "cp -r node_modules/cesium/Build/Cesium public/cesium",
-      "echo 'Cesium assets copied successfully'",
-
-      // Clean up build directory
-      "echo 'Cleaning up build directory'",
-      "rm -rf /var/www/build",
+      "echo 'Contents of application directory:'",
+      "ls -la /var/www/html",
 
       // Start the application with PM2
-      "echo 'Starting Next.js application with PM2'",
+      "echo 'Starting Next.js standalone server with PM2'",
       "export PM2_HOME=/root/.pm2",
       "pm2 install pm2-logrotate",
       "pm2 set pm2-logrotate:max_size 10M",
       "pm2 set pm2-logrotate:retain 5",
 
-      // Create PM2 ecosystem config for better process management
+      // PM2 ecosystem config. The `env` block is the runtime configuration
+      // for the Next.js server. Values are JSON.stringify'd to preserve
+      // any quotes, backslashes, or newlines.
       "cat << 'EOF' > /var/www/html/ecosystem.config.js",
       "module.exports = {",
       "  apps: [{",
       "    name: 'next-app',",
-      "    script: 'npm',",
-      "    args: 'start',",
+      "    script: 'server.js',",
       "    cwd: '/var/www/html',",
       "    instances: 1,",
       "    autorestart: true,",
@@ -624,7 +568,20 @@ export class WebUIConstruct extends Construct {
       "    max_memory_restart: '1G',",
       "    env: {",
       "      NODE_ENV: 'production',",
-      "      PORT: 3000",
+      "      PORT: 3000,",
+      "      HOSTNAME: '0.0.0.0',",
+      `      TILE_SERVER_URL: ${JSON.stringify(this.config.tileServerUrl || "")},`,
+      `      STAC_CATALOG_URL: ${JSON.stringify(this.config.stacCatalogUrl || "")},`,
+      `      STAC_LOADER_MCP_URL: ${JSON.stringify(this.config.stacLoaderMcpUrl || "")},`,
+      `      UTILITY_API_URL: ${JSON.stringify(this.config.webAppUtilityUrl || "")},`,
+      `      MODEL_RUNNER_API_URL: ${JSON.stringify(this.config.modelRunnerApiUrl || "")},`,
+      `      GEO_AGENTS_MCP_URL: ${JSON.stringify(this.config.geoAgentsMcpUrl || "")},`,
+      `      DETECTION_BRIDGE_BUCKET: ${JSON.stringify(this.config.detectionBridgeBucket || "")},`,
+      `      KINESIS_STREAM_NAME: ${JSON.stringify(this.config.kinesisStreamName || "")},`,
+      `      OIDC_AUTHORITY: ${JSON.stringify(this.config.authority || "")},`,
+      `      NEXTAUTH_URL: ${JSON.stringify(this.config.authSuccessUrl || "")},`,
+      `      NEXTAUTH_CLIENT_ID: ${JSON.stringify(this.config.authClientId || "")},`,
+      `      NEXTAUTH_SECRET: ${JSON.stringify(this.config.authSecret || "")}`,
       "    }",
       "  }]",
       "}",

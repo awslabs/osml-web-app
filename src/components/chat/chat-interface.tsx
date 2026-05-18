@@ -1,6 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 "use client";
-
 import { Cog6ToothIcon, ServerIcon } from "@heroicons/react/24/outline";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
@@ -38,11 +37,7 @@ import {
   toggleToolAutoApproval
 } from "@/store/slices/mcp-slice";
 import { RootState } from "@/store/store";
-import {
-  ChatMessage as NewChatMessage,
-  ChatSession,
-  MessageType
-} from "@/types/chat";
+import { ChatMessage as NewChatMessage, MessageType } from "@/types/chat";
 
 import { ChatInput } from "./chat-input";
 import { ChatMessage } from "./chat-message";
@@ -78,10 +73,6 @@ export const ChatInterface = ({
 
   // Refs to track processing state and prevent concurrent execution
   const lastProcessedMessageIndex = useRef(-1);
-  const startToolChainRef = useRef<
-    ((session: ChatSession) => Promise<void>) | null
-  >(null);
-  const isProcessingToolChainRef = useRef(false);
 
   // Circuit breaker mechanism to prevent infinite tool loops
   const consecutiveToolCallCount = useRef(0);
@@ -98,9 +89,6 @@ export const ChatInterface = ({
   const totalToolCount = useSelector(selectTotalToolCount);
   const isProcessingToolChain = useSelector(selectIsProcessingToolChain);
   const session = useSelector(selectChatSession);
-
-  // Refs for values used in effects without triggering re-execution
-  const sessionRef = useRef(session);
 
   // Get throttle info for current model
   const throttleInfo = useSelector((state: RootState) =>
@@ -168,14 +156,9 @@ export const ChatInterface = ({
   // Initialize smart quota polling
   useSmartQuotaPolling();
 
-  // Store the startToolChain function in a ref to avoid useEffect dependency issues
-  startToolChainRef.current = startToolChain;
-  isProcessingToolChainRef.current = isProcessingToolChain;
-  sessionRef.current = session;
-
   useEffect(() => {
     const handleToolCalls = async () => {
-      if (session.history.length && !isProcessingToolChainRef.current) {
+      if (session.history.length && !isProcessingToolChain) {
         const currentMessageIndex = session.history.length - 1;
         const lastMessage = session.history.at(-1);
 
@@ -195,9 +178,7 @@ export const ChatInterface = ({
           if (consecutiveToolCallCount.current > TOOL_CALL_LIMIT) {
             // Store the pending execution for after user confirmation
             pendingToolChainExecution.current = async () => {
-              if (startToolChainRef.current) {
-                await startToolChainRef.current(sessionRef.current);
-              }
+              await startToolChain();
             };
 
             // Show warning modal to user
@@ -207,15 +188,13 @@ export const ChatInterface = ({
           }
 
           // Start the tool chain - this will handle multiple rounds of tool calls automatically
-          if (startToolChainRef.current) {
-            await startToolChainRef.current(sessionRef.current);
-          }
+          await startToolChain();
         }
       }
     };
 
     handleToolCalls();
-  }, [session.history, TOOL_CALL_LIMIT]);
+  }, [session.history, TOOL_CALL_LIMIT, isProcessingToolChain, startToolChain]);
 
   // Use consolidated system readiness hook
   const { isSystemReady, isLoadingModels, isLoadingMcpTools } =
@@ -414,8 +393,8 @@ export const ChatInterface = ({
     }
   };
 
-  // Check if the current tool in the approval modal is auto-approved
-  const isCurrentToolAutoApproved = useCallback(() => {
+  // Check if the current tool in the approval modal is auto-approved.
+  const isCurrentToolAutoApproved = () => {
     if (!toolApprovalModal?.tool) return false;
 
     const toolName = toolApprovalModal.tool.name;
@@ -425,7 +404,7 @@ export const ChatInterface = ({
     );
 
     return server?.autoApprovedTools?.includes(toolName) ?? false;
-  }, [toolApprovalModal?.tool, mcpPreferences.enabledServers]);
+  };
 
   // Determine if we should show stop button
   const shouldShowStopButton =

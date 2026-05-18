@@ -142,6 +142,8 @@ function addClickMarker(
 }
 
 export default function Cesium() {
+  "use no memo";
+
   const viewerRef = useRef<CesiumViewer | null>(null);
   const [viewerConfig, setViewerConfig] = useState<ViewerConfig | null>(null);
   const [viewerReady, setViewerReady] = useState(false);

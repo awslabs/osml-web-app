@@ -10,7 +10,7 @@ const mockFetch = jest.fn();
 global.fetch = mockFetch;
 
 // Set required env vars before importing
-process.env.NEXT_PUBLIC_OIDC_AUTHORITY = "https://auth.example.com";
+process.env.OIDC_AUTHORITY = "https://auth.example.com";
 process.env.NEXTAUTH_CLIENT_ID = "test-client-id";
 process.env.NEXTAUTH_SECRET = "test-secret";
 

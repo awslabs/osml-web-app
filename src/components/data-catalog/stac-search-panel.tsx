@@ -47,17 +47,21 @@ export const StacSearchPanel = ({ className }: StacSearchPanelProps) => {
     new Set(filters.collections)
   );
 
+  // Sync local selection with filters.collections.
+  const [filtersCollectionsRef, setFiltersCollectionsRef] = useState(
+    filters.collections
+  );
+  if (filtersCollectionsRef !== filters.collections) {
+    setFiltersCollectionsRef(filters.collections);
+    setSelectedCollections(new Set(filters.collections));
+  }
+
   // Load collections on mount
   useEffect(() => {
     if (!collections.hasLoaded && !collections.loading) {
       dispatch(fetchCollections());
     }
   }, [dispatch, collections.hasLoaded, collections.loading]);
-
-  // Update local state when filters change
-  useEffect(() => {
-    setSelectedCollections(new Set(filters.collections));
-  }, [filters.collections]);
 
   const handleSearch = () => {
     dispatch(searchStacItems());

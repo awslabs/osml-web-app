@@ -44,11 +44,6 @@ function ImagePageContent() {
     (state) => state.imageViewer.currentAdjustments
   );
 
-  // Ref to capture latest adjustments for initial layer creation without
-  // triggering layer recreation on every slider change.
-  const currentAdjustmentsRef = useRef(currentAdjustments);
-  currentAdjustmentsRef.current = currentAdjustments;
-
   useEffect(() => {
     dispatch(fetchViewpoints());
   }, [dispatch]);
@@ -217,17 +212,7 @@ function ImagePageContent() {
         className: viewpointId,
         source: imageTileSource,
         style: {
-          // Style variables for dynamic adjustment (Requirement 1.2)
-          // Use currentAdjustments from Redux to preserve settings when switching viewpoints
-          variables: {
-            exposure: currentAdjustmentsRef.current.exposure,
-            contrast: currentAdjustmentsRef.current.contrast,
-            saturation: currentAdjustmentsRef.current.saturation,
-            gamma: currentAdjustmentsRef.current.gamma,
-            redGain: currentAdjustmentsRef.current.redGain,
-            greenGain: currentAdjustmentsRef.current.greenGain,
-            blueGain: currentAdjustmentsRef.current.blueGain
-          },
+          variables: adjustmentsToStyleVariables(currentAdjustments),
           // Style expressions referencing variables (Requirement 1.3)
           exposure: ["var", "exposure"],
           contrast: ["var", "contrast"],
@@ -280,6 +265,11 @@ function ImagePageContent() {
     // });
     //
     // mapInstance.current.addControl(mousePositionControl);
+    //
+    // `currentAdjustments` is intentionally omitted from deps; the sync
+    // effect below applies slider changes to the existing layer instead of
+    // recreating it (which would re-fetch tiles).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedViewpoint,
     viewpointBounds,

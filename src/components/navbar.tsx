@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates.
+import { UserCircleIcon } from "@heroicons/react/24/outline";
 import { Button } from "@heroui/button";
 import { Link } from "@heroui/link";
+import { useDisclosure } from "@heroui/modal";
 import {
   Navbar as HeroUINavbar,
   NavbarBrand,
@@ -18,7 +20,7 @@ import {
   LogoutIcon,
   MenuIcon
 } from "@/components/icons.tsx";
-import { ThemeSwitch } from "@/components/theme-switch.tsx";
+import { UserPreferencesModal } from "@/components/modals/user-preferences-modal";
 import { siteConfig } from "@/config/site.ts";
 import { useAppDispatch } from "@/store/hooks.ts";
 import { toggleDrawer } from "@/store/slices/navbar-slice.ts";
@@ -28,6 +30,11 @@ export const Navbar = () => {
   const { data: session } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const {
+    isOpen: isPrefsOpen,
+    onOpen: onOpenPrefs,
+    onOpenChange: onPrefsOpenChange
+  } = useDisclosure();
 
   // List of pages that have sidebars
   const pagesWithSidebars = ["/geo-agent", "/map", "/globe", "/image"];
@@ -89,7 +96,15 @@ export const Navbar = () => {
           <Link isExternal aria-label="Github" href={siteConfig.links.github}>
             <GithubIcon className="text-default-500" />
           </Link>
-          <ThemeSwitch />
+          <Button
+            isIconOnly
+            aria-label="User preferences"
+            isDisabled={!session}
+            variant="light"
+            onPress={onOpenPrefs}
+          >
+            <UserCircleIcon className="h-5 w-5" />
+          </Button>
           <Button
             startContent={session ? <LogoutIcon /> : <LoginIcon />}
             variant="light"
@@ -99,6 +114,10 @@ export const Navbar = () => {
           </Button>
         </NavbarItem>
       </NavbarContent>
+      <UserPreferencesModal
+        isOpen={isPrefsOpen}
+        onOpenChange={onPrefsOpenChange}
+      />
     </HeroUINavbar>
   );
 };

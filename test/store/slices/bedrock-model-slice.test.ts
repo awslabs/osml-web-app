@@ -123,7 +123,7 @@ describe("bedrock-model-slice async thunks", () => {
     expect(store.getState().bedrockModel.isLoading).toBe(true);
   });
 
-  it("fulfilled should auto-select Claude Opus 4.6", () => {
+  it("fulfilled selects the first model when no preference is set", () => {
     const store = createStore();
     const models = [
       {
@@ -136,35 +136,46 @@ describe("bedrock-model-slice async thunks", () => {
       }
     ];
     store.dispatch(
-      fetchAvailableModels.fulfilled(models as never, "r", undefined)
+      fetchAvailableModels.fulfilled(
+        { models, preferredModelId: null } as never,
+        "r",
+        undefined
+      )
     );
-    expect(store.getState().bedrockModel.selectedModel?.modelId).toContain(
-      "claude-opus-4-6"
+    expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
+      models[0].modelId
     );
   });
 
-  it("fulfilled should fall back to first Claude model", () => {
+  it("fulfilled selects the first model regardless of provider", () => {
     const store = createStore();
     const models = [
+      { modelId: "us.meta.llama-3-70b", modelName: "Llama 3" },
       {
         modelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         modelName: "Claude Sonnet 4.5"
-      },
-      { modelId: "us.meta.llama-3-70b", modelName: "Llama 3" }
+      }
     ];
     store.dispatch(
-      fetchAvailableModels.fulfilled(models as never, "r", undefined)
+      fetchAvailableModels.fulfilled(
+        { models, preferredModelId: null } as never,
+        "r",
+        undefined
+      )
     );
-    expect(store.getState().bedrockModel.selectedModel?.modelId).toContain(
-      "claude"
+    expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
+      "us.meta.llama-3-70b"
     );
   });
 
-  it("fulfilled should fall back to first model when no Claude", () => {
+  it("fulfilled selects the only model when the list has one entry", () => {
     const store = createStore();
     store.dispatch(
       fetchAvailableModels.fulfilled(
-        [{ modelId: "llama", modelName: "Llama" }] as never,
+        {
+          models: [{ modelId: "llama", modelName: "Llama" }],
+          preferredModelId: null
+        } as never,
         "r",
         undefined
       )
@@ -186,67 +197,23 @@ describe("bedrock-model-slice async thunks", () => {
 // ---------------------------------------------------------------------------
 
 describe("bedrock-model-slice - setDefaultModel with models", () => {
-  it("should select Claude Opus 4.6 when available", () => {
-    const store = createStore();
-    // Populate models via fulfilled action
-    store.dispatch(
-      fetchAvailableModels.fulfilled(
-        [
-          makeModel(
-            "us.anthropic.claude-opus-4-6-20250929-v1:0",
-            "Claude Opus 4.6"
-          ),
-          makeModel(
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "Claude Sonnet 4.5"
-          )
-        ] as never,
-        "r",
-        undefined
-      )
-    );
-
-    // Clear selection to test setDefaultModel
-    store.dispatch(setSelectedModel(null));
-    store.dispatch(setDefaultModel());
-
-    expect(store.getState().bedrockModel.selectedModel?.modelId).toContain(
-      "claude-opus-4-6"
-    );
-  });
-
-  it("should fall back to first Claude model when Opus 4.6 not available", () => {
+  it("selects the first model when no model is currently selected", () => {
     const store = createStore();
     store.dispatch(
       fetchAvailableModels.fulfilled(
-        [
-          makeModel("us.meta.llama-3-70b", "Llama 3"),
-          makeModel(
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "Claude Sonnet 4.5"
-          )
-        ] as never,
-        "r",
-        undefined
-      )
-    );
-
-    store.dispatch(setSelectedModel(null));
-    store.dispatch(setDefaultModel());
-
-    expect(store.getState().bedrockModel.selectedModel?.modelId).toContain(
-      "claude"
-    );
-  });
-
-  it("should fall back to first model when no Claude models available", () => {
-    const store = createStore();
-    store.dispatch(
-      fetchAvailableModels.fulfilled(
-        [
-          makeModel("us.meta.llama-3-70b", "Llama 3"),
-          makeModel("us.ai21.jamba-1-5-large", "Jamba 1.5")
-        ] as never,
+        {
+          models: [
+            makeModel(
+              "us.anthropic.claude-opus-4-6-20250929-v1:0",
+              "Claude Opus 4.6"
+            ),
+            makeModel(
+              "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+              "Claude Sonnet 4.5"
+            )
+          ],
+          preferredModelId: null
+        } as never,
         "r",
         undefined
       )
@@ -256,13 +223,144 @@ describe("bedrock-model-slice - setDefaultModel with models", () => {
     store.dispatch(setDefaultModel());
 
     expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
-      "us.meta.llama-3-70b"
+      "us.anthropic.claude-opus-4-6-20250929-v1:0"
     );
   });
 
   it("fulfilled with empty models should not select anything", () => {
     const store = createStore();
-    store.dispatch(fetchAvailableModels.fulfilled([] as never, "r", undefined));
+    store.dispatch(
+      fetchAvailableModels.fulfilled(
+        { models: [], preferredModelId: null } as never,
+        "r",
+        undefined
+      )
+    );
     expect(store.getState().bedrockModel.selectedModel).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectDefaultBedrockModel helper
+// ---------------------------------------------------------------------------
+
+import { selectDefaultBedrockModel } from "@/store/slices/bedrock-model-slice";
+
+describe("selectDefaultBedrockModel", () => {
+  const opus = makeModel(
+    "us.anthropic.claude-opus-4-6-20250929-v1:0",
+    "Claude Opus 4.6"
+  );
+  const sonnet = makeModel(
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "Claude Sonnet 4.5"
+  );
+  const llama = makeModel("us.meta.llama-3-70b", "Llama 3");
+
+  it("returns null for empty list", () => {
+    expect(selectDefaultBedrockModel([])).toBeNull();
+  });
+
+  it("returns the preferred model when present", () => {
+    const result = selectDefaultBedrockModel([opus, sonnet], sonnet.modelId);
+    expect(result?.modelId).toBe(sonnet.modelId);
+  });
+
+  it("ignores a stale preferred ID and falls back to the first model", () => {
+    const result = selectDefaultBedrockModel([opus, sonnet], "no-such-model");
+    expect(result?.modelId).toBe(opus.modelId);
+  });
+
+  it("falls back to the first model when the preferred ID is not present", () => {
+    const result = selectDefaultBedrockModel([llama, sonnet]);
+    expect(result?.modelId).toBe(llama.modelId);
+  });
+
+  it("returns the only model when the list has one entry", () => {
+    const result = selectDefaultBedrockModel([llama]);
+    expect(result?.modelId).toBe(llama.modelId);
+  });
+
+  it("treats null preferred ID the same as undefined", () => {
+    const result = selectDefaultBedrockModel([opus, sonnet], null);
+    expect(result?.modelId).toBe(opus.modelId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchAvailableModels.fulfilled — preferredModelId path
+// ---------------------------------------------------------------------------
+
+describe("fetchAvailableModels.fulfilled — preferredModelId", () => {
+  it("selects the preferred model when it is in the list", () => {
+    const store = createStore();
+    const models = [
+      makeModel(
+        "us.anthropic.claude-opus-4-6-20250929-v1:0",
+        "Claude Opus 4.6"
+      ),
+      makeModel(
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "Claude Sonnet 4.5"
+      )
+    ];
+    store.dispatch(
+      fetchAvailableModels.fulfilled(
+        {
+          models,
+          preferredModelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        } as never,
+        "r",
+        undefined
+      )
+    );
+    expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    );
+  });
+
+  it("falls back to the first model when the preferred ID is not available", () => {
+    const store = createStore();
+    const models = [
+      makeModel(
+        "us.anthropic.claude-opus-4-6-20250929-v1:0",
+        "Claude Opus 4.6"
+      ),
+      makeModel(
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "Claude Sonnet 4.5"
+      )
+    ];
+    store.dispatch(
+      fetchAvailableModels.fulfilled(
+        { models, preferredModelId: "no-such-model" } as never,
+        "r",
+        undefined
+      )
+    );
+    expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
+      models[0].modelId
+    );
+  });
+
+  it("does not override an already-selected model", () => {
+    const store = createStore();
+    store.dispatch(setSelectedModel(makeModel("m-locked", "Locked")));
+    const models = [
+      makeModel("us.anthropic.claude-opus-4-6-20250929-v1:0", "Claude Opus 4.6")
+    ];
+    store.dispatch(
+      fetchAvailableModels.fulfilled(
+        {
+          models,
+          preferredModelId: "us.anthropic.claude-opus-4-6-20250929-v1:0"
+        } as never,
+        "r",
+        undefined
+      )
+    );
+    expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
+      "m-locked"
+    );
   });
 });
