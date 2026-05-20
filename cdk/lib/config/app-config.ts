@@ -35,7 +35,6 @@ export class WebAppConfig extends BaseConfig {
   public modelRunnerApiUrl?: string;
   public authSuccessUrl?: string;
   public authClientId?: string;
-  public authSecret?: string;
   public authority?: string;
 
   constructor(config: ConfigType = {}) {
@@ -46,6 +45,7 @@ export class WebAppConfig extends BaseConfig {
 export class ModelRunnerApiConfig extends BaseConfig {
   public modelRunnerImageRequestQueueArn!: string;
   public modelRunnerStatusTopicArn!: string;
+  public allowedBucketArns?: string[];
   public securityGroupId?: string;
   public hostedZone?: string;
   public domainName?: string;
@@ -83,6 +83,7 @@ export class WafConfig extends BaseConfig {
 export class WebAppUtilityConfig extends BaseConfig {
   public restrictBucketAccess!: boolean;
   public allowedBucketArns?: string[];
+  public detectionBridgeBucketName?: string;
   public securityGroupId?: string;
   public hostedZone?: string;
   public domainName?: string;
@@ -108,7 +109,7 @@ export class WebAppUtilityConfig extends BaseConfig {
     super(config);
     // Set defaults only if not provided in config
     if (this.restrictBucketAccess === undefined) {
-      this.restrictBucketAccess = false;
+      this.restrictBucketAccess = true;
     }
     // Initialize bedrockModels if provided
     if (config.bedrockModels) {

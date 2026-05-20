@@ -1,5 +1,6 @@
 # Copyright 2024 Amazon.com, Inc. or its affiliates.
 
+import logging
 import os
 import re
 import ssl
@@ -7,6 +8,9 @@ from typing import Any, Dict, Union
 
 import jwt
 import requests
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 
 def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
@@ -18,13 +22,10 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
 
     :return: IAM policy
     """
-    print("REST API authorization handler started")
-
     id_token = get_id_token(event)
 
     if not id_token:
-        print("Missing id_token in request. Denying access.")
-        print(f"REST API authorization handler completed with 'Deny' for resource {event['methodArn']}")
+        logger.info("Denying access: missing id_token for resource %s", event["methodArn"])
         return generate_policy(effect="Deny", resource=event["methodArn"])
 
     authority = os.environ.get("AUTHORITY", "")
@@ -33,12 +34,10 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     if jwt_data := id_token_is_valid(id_token=id_token, audience=audience, authority=authority):
         policy = generate_policy(effect="Allow", resource=event["methodArn"], username=jwt_data["sub"])
         policy["context"] = {"username": jwt_data["sub"]}
-
-        print(f"Generated policy: {policy}")
-        print("REST API authorization handler completed with 'Allow' for resource")
+        logger.info("Allowed access for principal %s", jwt_data["sub"])
         return policy
 
-    print("REST API authorization handler completed with 'Deny' for resource")
+    logger.info("Denying access: invalid id_token for resource %s", event["methodArn"])
     return generate_policy(effect="Deny", resource=event["methodArn"])
 
 
@@ -73,9 +72,9 @@ def id_token_is_valid(*, id_token: str, audience: str, authority: str) -> Union[
     :return: Decoded JWT data or False if invalid
     """
     if not jwt.algorithms.has_crypto:
-        print("No crypto support for JWT, please install the cryptography dependency")
+        logger.error("No crypto support for JWT, please install the cryptography dependency")
         return False
-    print(f"{authority}/.well-known/openid-configuration")
+    logger.debug("Fetching OIDC metadata from %s/.well-known/openid-configuration", authority)
 
     # Here we will point to the sponsor bundle if available,
     cert_path = os.getenv("SSL_CERT_FILE", None)
@@ -85,7 +84,7 @@ def id_token_is_valid(*, id_token: str, audience: str, authority: str) -> Union[
         timeout=120,
     )
     if resp.status_code != 200:
-        print("Could not get OIDC metadata: %s", resp.content)
+        logger.error("Could not get OIDC metadata: status=%d", resp.status_code)
         return False
 
     oidc_metadata = resp.json()
@@ -111,8 +110,8 @@ def id_token_is_valid(*, id_token: str, audience: str, authority: str) -> Union[
             },
         )
         return data
-    except jwt.exceptions.PyJWTError as e:
-        print(e)
+    except jwt.exceptions.PyJWTError:
+        logger.warning("JWT validation failed", exc_info=True)
         return False
 
 

@@ -16,8 +16,9 @@ from urllib.parse import unquote
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError, NoCredentialsError
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from quota_codes_loader import get_quota_codes_loader
 
@@ -36,6 +37,17 @@ app = FastAPI(title="WebApp Utility API", description="Utility API for OSML Prot
 RESTRICT_BUCKET_ACCESS = os.getenv("RESTRICT_BUCKET_ACCESS", "false").lower() == "true"
 ALLOWED_BUCKET_ARNS = os.getenv("ALLOWED_BUCKET_ARNS", "").split(",") if os.getenv("ALLOWED_BUCKET_ARNS") else []
 ENABLE_CORS = os.getenv("ENABLE_CORS", "false").lower() == "true"
+CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
+# Fail fast at cold start if no CORS origins are configured. The CDK construct
+# always populates this with the web app domain (and localhost:3000 in non-prod);
+# an empty list indicates a deployment misconfiguration we'd rather catch here
+# than silently fall back to a wildcard.
+if not CORS_ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "CORS_ALLOWED_ORIGINS environment variable must be set with at least one origin. "
+        "This should be populated by the CDK construct from the web app domain."
+    )
 
 # Bedrock quota usage tracking
 ENABLE_QUOTA_TRACKING = os.getenv("ENABLE_QUOTA_TRACKING", "true").lower() == "true"
@@ -131,10 +143,26 @@ if ENABLED_MODELS_ENV:
 if ENABLE_CORS:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=CORS_ALLOWED_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
     )
+
+
+# Global handler for unhandled exceptions. Anything that escapes a route's
+# own try/except gets logged with a full traceback (via logger.exception)
+# and returned to the client as a generic Internal Server Error so we never
+# leak internal details — exception messages, stack traces, AWS resource
+# ARNs — through the API response.
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(f"Unhandled exception in {request.method} {request.url.path}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
+
 # Cache for buckets that have been CORS-configured (persists for Lambda lifetime)
 _cors_configured_buckets: set = set()
 
@@ -373,7 +401,7 @@ def ensure_bucket_cors(bucket_name: str) -> None:
                 {
                     "AllowedHeaders": ["*"],
                     "AllowedMethods": ["GET", "HEAD"],
-                    "AllowedOrigins": ["*"],
+                    "AllowedOrigins": CORS_ALLOWED_ORIGINS,
                     "ExposeHeaders": ["ETag", "Content-Length", "Content-Type"],
                     "MaxAgeSeconds": 3600,
                 }
@@ -673,11 +701,9 @@ async def get_presigned_url(bucket: str, key: str):
         return PresignedUrlResponse(presignedUrl=url)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to generate presigned URL for {bucket}/{key}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate presigned URL: {str(e)}"
-        )
+    except Exception:
+        logger.exception(f"Failed to generate presigned URL for {bucket}/{key}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate presigned URL")
 
 
 # Bedrock Endpoints

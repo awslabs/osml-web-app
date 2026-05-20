@@ -148,9 +148,9 @@ global_settings:
     - rule_id: "SECRET-SECRET-KEYWORD"
       path: "test/auth/config.test.ts"
       reason: "Jest test sets process.env.NEXTAUTH_SECRET='test-secret'; literal placeholder"
-    - rule_id: "SECRET-SECRET-KEYWORD"
-      path: ".github/workflows/pr.yml"
-      reason: "GitHub Actions `secrets: inherit` keyword, not a secret value"
+    - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
+      path: "cdk/lib/constructs/nodejs-keyring-sha256.ts"
+      reason: "SHA256 of the publicly available Node.js release keyring (https://github.com/nodejs/release-keys/raw/HEAD/gpg/pubring.kbx). Used as a tamper-evident integrity anchor for binary install verification — itself a security control, not a secret being protected. Isolated in its own one-line module so this suppression does not mask any future high-entropy string in the consuming construct."
     # Bandit suppressions.
     # B101 (assert_used): bandit flags every `assert` because it's stripped
     # under `python -O`, but `assert` is how pytest expresses test assertions.

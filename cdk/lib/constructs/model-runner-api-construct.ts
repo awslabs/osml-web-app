@@ -260,12 +260,15 @@ export class ModelRunnerApiConstruct extends Construct {
     this.jobsTable.grantReadWriteData(statusMonitorFunction);
     modelRunnerQueue.grantSendMessages(apiFunction);
 
-    // S3 permissions for deleting job output files
-    const s3DeletePolicy = new PolicyStatement({
-      actions: ["s3:ListBucket", "s3:DeleteObject"],
-      resources: ["*"] // Allow deletion from any bucket (job record contains bucket name)
-    });
-    apiFunction.addToRolePolicy(s3DeletePolicy);
+    // S3 permissions for deleting job output files, scoped to allowed buckets
+    const bucketArns = this.config.allowedBucketArns ?? [];
+    if (bucketArns.length > 0) {
+      const s3DeletePolicy = new PolicyStatement({
+        actions: ["s3:ListBucket", "s3:DeleteObject"],
+        resources: [...bucketArns, ...bucketArns.map((arn) => `${arn}/*`)]
+      });
+      apiFunction.addToRolePolicy(s3DeletePolicy);
+    }
 
     // CloudWatch Logs permissions
     const cloudWatchPolicy = new PolicyStatement({
@@ -299,9 +302,8 @@ export class ModelRunnerApiConstruct extends Construct {
     //     construct fans out Query calls across every index that serves an
     //     API endpoint; individual index ARNs are intentionally not known
     //     to the policy layer.
-    //   - `s3:ListBucket` + `s3:DeleteObject` use `Resource: *` because the
-    //     bucket that stores a job's outputs is read from the job record at
-    //     request time and can change per job.
+    //   - `s3:ListBucket` + `s3:DeleteObject` are scoped to the allowed
+    //     bucket ARNs passed in via config (with /* object-key suffixes).
     //   - `logs:*` uses `arn:aws:logs:*:*:*` so the function can create and
     //     write to its own log group regardless of region/account; this is
     //     the standard shape published by AWS for Lambda CloudWatch Logs
@@ -320,7 +322,13 @@ export class ModelRunnerApiConstruct extends Construct {
         {
           id: "AwsSolutions-IAM5",
           reason:
-            "The Model Runner API deletes job output objects from the S3 bucket identified by the job record at request time. The bucket name is not known at synth time because it varies per job and per tenant, so s3:ListBucket and s3:DeleteObject are granted with a wildcard resource. The action set is narrowly limited to listing and deleting objects.",
+            "The Model Runner API deletes job output objects from S3 buckets listed in the allowed bucket ARNs config. The /* suffix on each bucket ARN is required to match object keys within those buckets. The action set is limited to s3:ListBucket and s3:DeleteObject.",
+          appliesTo: bucketArns.map((arn) => `Resource::${arn}/*`)
+        },
+        {
+          id: "AwsSolutions-IAM5",
+          reason:
+            "VPC networking permissions (ec2:CreateNetworkInterface, ec2:DeleteNetworkInterface, ec2:DescribeNetworkInterfaces, ec2:AttachNetworkInterface, ec2:DetachNetworkInterface) require Resource: * because the ENI ARN is not known until the Lambda is invoked. This is the standard AWS-recommended grant for Lambda functions deployed in a VPC.",
           appliesTo: ["Resource::*"]
         },
         {

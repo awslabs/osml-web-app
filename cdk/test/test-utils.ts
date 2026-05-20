@@ -64,6 +64,7 @@ export function createTestDeploymentConfig(
       webAppConfig: {
         buildFromSource: false,
         artifactUrl: "https://test-artifacts.example.com/webapp.zip",
+        hostedZone: "test.example.com",
         domainName: "test-webapp.example.com",
         authSuccessUrl: "https://test-webapp.example.com",
         ...overrides?.dataplaneConfig?.webAppConfig

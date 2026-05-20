@@ -28,8 +28,7 @@
       "hostedZone": "example.com",
       "domainName": "osml.example.com",
       "authSuccessUrl": "https://osml.example.com",
-      "authClientId": "osml-web",
-      "authSecret": ""
+      "authClientId": "osml-web"
     },
     "modelRunnerApiConfig": {
       "hostedZone": "example.com",

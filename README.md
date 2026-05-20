@@ -152,10 +152,12 @@ The web app connects to two groups of services: backend services deployed by thi
 
    See [`.env.local.example`](./.env.local.example) for all available variables.
 
-4. **Generate NextAuth secret**:
+4. **Generate NextAuth secret for local development**:
    ```bash
    openssl rand -base64 32
    ```
+
+   Add the output to `.env.local` as `NEXTAUTH_SECRET`. For deployed environments, CDK auto-generates this secret in AWS Secrets Manager — you do not need to provide one in `deployment.json`.
 
 ## Development
 
