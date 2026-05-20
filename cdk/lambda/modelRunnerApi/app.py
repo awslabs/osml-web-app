@@ -8,8 +8,9 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from models import ImageProcessingJobCreate, ImageProcessingJobList, ImageProcessingJobStatus, NMSAlgorithm, SoftNMSAlgorithm
 
 from config import IMAGE_REQUEST_QUEUE_URL, initialize_table, s3, sqs
@@ -38,6 +39,20 @@ if enable_cors:
     )
 else:
     logger.info("CORS disabled for production")
+
+
+# Global handler for unhandled exceptions. Anything that escapes a route's
+# own try/except gets logged with a full traceback (via logger.exception)
+# and returned to the client as a generic Internal Server Error so we never
+# leak internal details — exception messages, stack traces, AWS resource
+# ARNs — through the API response.
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(f"Unhandled exception in {request.method} {request.url.path}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
 
 
 def validate_post_processing(job_request: ImageProcessingJobCreate) -> None:
@@ -74,11 +89,9 @@ def create_initial_job_record(job_request: ImageProcessingJobCreate, timestamp: 
 
     try:
         table.put_item(Item=initial_job_status)
-    except Exception as e:
-        logger.error(f"Failed to create job record: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create job record: {str(e)}"
-        )
+    except Exception:
+        logger.exception("Failed to create job record")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create job record")
 
 
 def submit_job_to_queue(job_request: ImageProcessingJobCreate) -> None:
@@ -87,9 +100,9 @@ def submit_job_to_queue(job_request: ImageProcessingJobCreate) -> None:
 
     try:
         sqs.send_message(QueueUrl=IMAGE_REQUEST_QUEUE_URL, MessageBody=json.dumps(message))
-    except Exception as e:
-        logger.error(f"Failed to submit job: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit job: {str(e)}")
+    except Exception:
+        logger.exception("Failed to submit job")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to submit job")
 
 
 @app.post("/jobs", status_code=status.HTTP_201_CREATED)
@@ -123,9 +136,9 @@ async def list_image_processing_jobs():
         parsed_jobs = [ImageProcessingJobStatus(**job) for job in jobs]
 
         return ImageProcessingJobList(jobs=parsed_jobs)
-    except Exception as e:
-        logger.error(f"Failed to list jobs: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list jobs: {str(e)}")
+    except Exception:
+        logger.exception("Failed to list jobs")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list jobs")
 
 
 @app.get("/jobs/{job_id}", response_model=ImageProcessingJobStatus)
@@ -141,9 +154,9 @@ async def get_image_processing_job(job_id: str):
         return ImageProcessingJobStatus(**job)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to get job: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get job: {str(e)}")
+    except Exception:
+        logger.exception("Failed to get job")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get job")
 
 
 @app.delete("/jobs/{job_id}", status_code=status.HTTP_200_OK)
@@ -163,7 +176,7 @@ async def delete_image_processing_job(job_id: str):
 
         # Step 1: Delete S3 output file (non-critical, log errors but continue)
         # Output path: <output_bucket>/<job_name>/<job_id>.geojson
-        s3_cleanup_error = None
+        s3_cleanup_failed = False
         if output_bucket and job_name:
             try:
                 s3_key = f"{job_name}/{job_id}.geojson"
@@ -172,9 +185,9 @@ async def delete_image_processing_job(job_id: str):
                 s3.delete_object(Bucket=output_bucket, Key=s3_key)
                 logger.info(f"Successfully deleted S3 object for job {job_id}")
 
-            except Exception as e:
-                s3_cleanup_error = str(e)
-                logger.error(f"Failed to delete S3 object for job {job_id}: {s3_cleanup_error}")
+            except Exception:
+                s3_cleanup_failed = True
+                logger.exception(f"Failed to delete S3 object for job {job_id}")
                 # Continue with DDB deletion even if S3 cleanup fails
         else:
             logger.info(f"No S3 output bucket or job name found for job {job_id}, skipping S3 cleanup")
@@ -183,16 +196,18 @@ async def delete_image_processing_job(job_id: str):
         table.delete_item(Key={"job_id": str(job_id)})
         logger.info(f"Successfully deleted job record from DynamoDB: {job_id}")
 
-        # Return success with optional S3 cleanup warning
+        # Return success with optional S3 cleanup warning. The warning
+        # message is intentionally generic — operators can find the
+        # underlying S3 error in CloudWatch via logger.exception above.
         response_data = {"success": True, "message": f"Job {job_id} deleted successfully"}
 
-        if s3_cleanup_error:
-            response_data["warning"] = f"S3 cleanup failed: {s3_cleanup_error}"
+        if s3_cleanup_failed:
+            response_data["warning"] = "S3 cleanup failed"
 
         return response_data
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to delete job: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete job: {str(e)}")
+    except Exception:
+        logger.exception("Failed to delete job")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete job")

@@ -44,6 +44,7 @@ describe("cdk-nag Compliance Checks - WebAppStack", () => {
       config: {
         buildFromSource: false,
         artifactUrl: deployment.dataplaneConfig!.webAppConfig!.artifactUrl,
+        hostedZone: deployment.dataplaneConfig!.webAppConfig!.hostedZone,
         domainName: deployment.dataplaneConfig!.webAppConfig!.domainName,
         authSuccessUrl:
           deployment.dataplaneConfig!.webAppConfig!.authSuccessUrl,

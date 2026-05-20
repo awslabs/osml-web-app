@@ -58,8 +58,6 @@ export interface WebAppConfig {
   authSuccessUrl?: string;
   /** Auth client ID for the web app. */
   authClientId?: string;
-  /** Auth secret for the web app. */
-  authSecret?: string;
 }
 
 /**
@@ -460,13 +458,6 @@ function validateWebAppConfig(webAppData: unknown): WebAppConfig | undefined {
     false
   );
   if (authClientId) result.authClientId = authClientId;
-
-  const authSecret = validateStringField(
-    webApp.authSecret,
-    "dataplaneConfig.webAppConfig.authSecret",
-    false
-  );
-  if (authSecret) result.authSecret = authSecret;
 
   return Object.keys(result).length > 0 ? result : undefined;
 }

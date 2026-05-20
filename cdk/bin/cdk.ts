@@ -51,12 +51,26 @@ const authConfig: AuthConfig = {
     ""
 };
 
+// Compute the detection bridge bucket name and ARN (owned by this CDK app)
+const detectionBridgeBucketName = `webapp-detection-bridge-${deploymentConfig.account.id}`;
+const detectionBridgeBucketArn = `arn:aws:s3:::${detectionBridgeBucketName}`;
+
+// Merge deployer-supplied bucket ARNs with the bridge bucket ARN.
+// The deployer lists external buckets (e.g. mr-bucket-sink, test imagery) in
+// deployment.json; the web app auto-adds its own bridge bucket.
+const allowedBucketArns = [
+  detectionBridgeBucketArn,
+  ...(deploymentConfig.dataplaneConfig?.webAppUtilityConfig
+    ?.allowedBucketArns ?? [])
+];
+
 // Map dataplaneConfig to ModelRunnerApiConfig
 const modelRunnerApiConfig = new ModelRunnerApiConfig({
   modelRunnerImageRequestQueueArn:
     deploymentConfig.dataplaneConfig?.MODEL_RUNNER_QUEUE_ARN || "",
   modelRunnerStatusTopicArn:
     deploymentConfig.dataplaneConfig?.MODEL_RUNNER_STATUS_TOPIC_ARN || "",
+  allowedBucketArns,
   hostedZone:
     deploymentConfig.dataplaneConfig?.modelRunnerApiConfig?.hostedZone,
   domainName: deploymentConfig.dataplaneConfig?.modelRunnerApiConfig?.domainName
@@ -66,8 +80,8 @@ const modelRunnerApiConfig = new ModelRunnerApiConfig({
 const webAppUtilityConfig = new WebAppUtilityConfig({
   restrictBucketAccess:
     deploymentConfig.dataplaneConfig?.webAppUtilityConfig?.restrictBucketAccess,
-  allowedBucketArns:
-    deploymentConfig.dataplaneConfig?.webAppUtilityConfig?.allowedBucketArns,
+  allowedBucketArns,
+  detectionBridgeBucketName,
   hostedZone: deploymentConfig.dataplaneConfig?.webAppUtilityConfig?.hostedZone,
   domainName: deploymentConfig.dataplaneConfig?.webAppUtilityConfig?.domainName,
   stacCatalogUrl: deploymentConfig.dataplaneConfig?.STAC_CATALOG_URL,
@@ -163,7 +177,6 @@ const dynamicWebAppConfig = {
       ? `https://${webAppDomainNameDerived}`
       : undefined),
   authClientId: deploymentConfig.dataplaneConfig?.webAppConfig?.authClientId,
-  authSecret: deploymentConfig.dataplaneConfig?.webAppConfig?.authSecret,
   // Service URLs from dependencies
   tileServerUrl: deploymentConfig.dataplaneConfig?.TILE_SERVER_URL,
   stacCatalogUrl: deploymentConfig.dataplaneConfig?.STAC_CATALOG_URL,

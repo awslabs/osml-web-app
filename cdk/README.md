@@ -58,6 +58,12 @@ See [`bin/deployment/deployment.json.example`](./bin/deployment/deployment.json.
 
 > **Note:** `deployment.json` is gitignored. Only the `.example` file is committed.
 
+> **HTTPS is required.** The web app is served over HTTPS only. Set
+> `dataplaneConfig.webAppConfig.hostedZone` (or the top-level
+> `DOMAIN_HOSTED_ZONE_NAME`) to a Route 53 hosted zone you own in this AWS
+> account; the deploy will fail fast if no hosted zone is configured. CDK
+> issues an ACM certificate via DNS validation against that zone.
+
 ## Deployment
 
 ```bash

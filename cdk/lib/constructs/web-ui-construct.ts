@@ -7,7 +7,8 @@ import {
   DockerImage,
   Duration,
   RemovalPolicy,
-  Size
+  Size,
+  Stack
 } from "aws-cdk-lib";
 import { AutoScalingGroup, ScalingEvents } from "aws-cdk-lib/aws-autoscaling";
 import {
@@ -53,6 +54,7 @@ import {
   IBucket
 } from "aws-cdk-lib/aws-s3";
 import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
+import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import {
   AwsCustomResource,
@@ -68,6 +70,7 @@ import { join, resolve } from "path";
 import { URL } from "url";
 
 import { WafConfig } from "../config/app-config";
+import { NODEJS_KEYRING_SHA256 } from "./nodejs-keyring-sha256";
 import { OSMLAccount } from "./types";
 import { WebAppWaf } from "./web-app-waf";
 
@@ -86,7 +89,6 @@ export interface WebAppConfig {
   geoAgentsMcpUrl: string;
   authSuccessUrl: string;
   authClientId: string;
-  authSecret: string;
   authority: string;
   detectionBridgeBucket?: string;
   kinesisStreamName?: string;
@@ -360,40 +362,33 @@ export class WebUIConstruct extends Construct {
 
     let listener;
 
-    if (this.config.hostedZone) {
-      // Set up SSL and Route 53 if domain name is provided
-      const hostedZone = HostedZone.fromLookup(this, "HostedZone", {
-        domainName: this.config.hostedZone
-      });
+    // The web app is served over HTTPS only. The hosted zone is validated
+    // as required in setup() so this.config.hostedZone is guaranteed to be
+    // set; domainName falls back to the hosted zone apex.
+    const hostedZone = HostedZone.fromLookup(this, "HostedZone", {
+      domainName: this.config.hostedZone
+    });
 
-      // Use WEB_APP_DOMAIN_NAME if provided, otherwise fall back to hosted zone
-      const domainName = this.config.domainName ?? this.config.hostedZone;
+    const domainName = this.config.domainName;
 
-      const certificate = new Certificate(this, "Certificate", {
-        domainName: domainName,
-        validation: CertificateValidation.fromDns(hostedZone)
-      });
+    const certificate = new Certificate(this, "Certificate", {
+      domainName: domainName,
+      validation: CertificateValidation.fromDns(hostedZone)
+    });
 
-      listener = this.alb.addListener("HttpsListener", {
-        port: 443,
-        certificates: [certificate],
-        protocol: ApplicationProtocol.HTTPS,
-        sslPolicy: SslPolicy.TLS12
-      });
+    listener = this.alb.addListener("HttpsListener", {
+      port: 443,
+      certificates: [certificate],
+      protocol: ApplicationProtocol.HTTPS,
+      sslPolicy: SslPolicy.TLS12
+    });
 
-      // Route 53 Alias Record
-      new ARecord(this, "AliasRecord", {
-        zone: hostedZone,
-        target: RecordTarget.fromAlias(new LoadBalancerTarget(this.alb)),
-        recordName: domainName
-      });
-    } else {
-      // Set up HTTP listener if no domain name is provided
-      listener = this.alb.addListener("HttpListener", {
-        port: 80,
-        protocol: ApplicationProtocol.HTTP
-      });
-    }
+    // Route 53 Alias Record
+    new ARecord(this, "AliasRecord", {
+      zone: hostedZone,
+      target: RecordTarget.fromAlias(new LoadBalancerTarget(this.alb)),
+      recordName: domainName
+    });
 
     // CloudWatch log group for PM2, nginx, and user-data logs shipped
     // by the CloudWatch agent installed via user data below.
@@ -402,6 +397,31 @@ export class WebUIConstruct extends Construct {
       retention: RetentionDays.ONE_MONTH,
       removalPolicy: this.removalPolicy
     });
+
+    // Generate the NextAuth session-signing secret in Secrets Manager rather
+    // than baking it into the EC2 user-data. The EC2 instance role is granted
+    // read access below, and user-data fetches the value at boot via the AWS
+    // CLI so the plaintext never appears in the launch template, the
+    // CloudFormation template, or the instance metadata service.
+    const nextAuthSecret = new Secret(this, "NextAuthSecret", {
+      secretName: `${this.projectName}-nextauth-secret`,
+      description:
+        "NextAuth session-signing secret used by the web app to sign and encrypt JWT session tokens and CSRF cookies. Consumed by the EC2 instances at boot.",
+      generateSecretString: {
+        passwordLength: 64,
+        excludePunctuation: true,
+        includeSpace: false
+      },
+      removalPolicy: this.removalPolicy
+    });
+
+    NagSuppressions.addResourceSuppressions(nextAuthSecret, [
+      {
+        id: "AwsSolutions-SMG4",
+        reason:
+          "Automatic rotation is not applicable to the NextAuth session-signing secret. EC2 instances read the secret only once at boot and inject it into the PM2 environment; rotating the value in Secrets Manager would not propagate to running instances, and would invalidate every active user session whenever rotation occurred. Rotation is intentionally tied to the deployment lifecycle (new value on stack replacement) rather than a time-based schedule."
+      }
+    ]);
 
     // User data script
     const userData = UserData.forLinux();
@@ -418,66 +438,17 @@ export class WebUIConstruct extends Construct {
       "echo 'Installing basic utilities'",
       "dnf install -q -y unzip aws-cli nginx amazon-cloudwatch-agent",
 
-      // Install Node.js 24 via NVM
-      "echo 'Installing Node.js 24 via NVM'",
-
-      // Set up proper shell environment for NVM installation
-      "export HOME=/root",
-      "cd /root",
-      "touch /root/.bashrc",
-
-      // Install NVM
-      "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash",
-
-      // Set up NVM environment explicitly
-      'export NVM_DIR="/root/.nvm"',
-      '[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"',
-      '[ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"',
-
-      // Verify NVM is available
-      "echo 'Verifying NVM installation:'",
-      "nvm --version",
-
-      // Install Node.js 24
-      "echo 'Installing Node.js 24'",
-      "nvm install 24",
-      "nvm use 24",
-      "nvm alias default 24",
-
-      // Get the actual installed version and set PATH
-      "NODE_VERSION=$(nvm version)",
-      'echo "Node.js version installed: $NODE_VERSION"',
-      'export PATH="/root/.nvm/versions/node/$NODE_VERSION/bin:$PATH"',
-
-      // Add to bashrc for future sessions
-      'echo "export NVM_DIR=\\"/root/.nvm\\"" >> /root/.bashrc',
-      'echo "[ -s \\"$NVM_DIR/nvm.sh\\" ] && source \\"$NVM_DIR/nvm.sh\\"" >> /root/.bashrc',
-      'echo "[ -s \\"$NVM_DIR/bash_completion\\" ] && source \\"$NVM_DIR/bash_completion\\"" >> /root/.bashrc',
-
-      // Verify installations
-      "echo 'Verifying installations:'",
-      "nginx -v",
-      "node --version",
-      "npm --version",
-      "which node",
-      "which npm",
-
-      // Install PM2 globally
-      "echo 'Installing PM2 globally'",
-      "npm install -g pm2",
-
-      // Verify PM2
-      "echo 'Verifying PM2 installation:'",
-      "pm2 --version",
-      "which pm2",
-
-      // Configure nginx
-      "echo 'Configuring Nginx'",
-      this.getNginxConfig(),
-
-      // Configure CloudWatch agent to ship PM2, nginx, and user-data logs.
-      // The agent is started here (before PM2) so any crash during the
-      // Next.js startup that follows is captured in CloudWatch.
+      // Configure and start the CloudWatch agent BEFORE the long-running
+      // install steps below. Starting the agent early means every line of
+      // /var/log/user-data-script.log streams to CloudWatch in near
+      // real-time, including any failures during Node.js install, GPG
+      // verification, Secrets Manager fetch, or app deployment. Without
+      // this, a failure before agent startup would leave the log only on
+      // the (likely terminated) instance's local disk.
+      //
+      // The agent's collect_list also references /root/.pm2/logs and
+      // /var/log/nginx/* — those files don't exist yet but the agent
+      // tolerates missing files and starts streaming once they appear.
       "echo 'Configuring CloudWatch agent'",
       "cat << 'EOF' > /opt/aws/amazon-cloudwatch-agent/bin/config.json",
       JSON.stringify({
@@ -518,6 +489,65 @@ export class WebUIConstruct extends Construct {
       "EOF",
       "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/bin/config.json -s",
 
+      // Install Node.js 24 from nodejs.org with full GPG signature
+      // verification. Each release publishes a SHASUMS256.txt file together
+      // with a detached PGP signature signed by one of the Release Team
+      // members. We use gpgv (not gpg) for verification because it is a
+      // standalone verify-only tool with no gpg-agent or dirmngr daemon
+      // dependencies. AL2023 ships gnupg2-minimal by default which lacks
+      // gpgv, so we swap it for the full gnupg2 package below.
+      //
+      // Trust anchor: the SHA256 of the Node.js project's official keyring
+      // file (pubring.kbx) — see https://github.com/nodejs/release-keys.
+      // Update this hash only when the Node.js project rotates release
+      // managers (years-long cadence). The keyring is downloaded over
+      // HTTPS, but the pinned hash here ensures a wrong file from any
+      // source aborts the script.
+      "echo 'Installing Node.js 24 with GPG-verified release artifacts'",
+      "dnf swap -q -y gnupg2-minimal gnupg2",
+      `NODEJS_KEYRING_SHA256=${NODEJS_KEYRING_SHA256}`,
+      "NODEJS_KEYRING=/tmp/nodejs-keyring.kbx",
+      "curl -fsSL https://github.com/nodejs/release-keys/raw/HEAD/gpg/pubring.kbx -o ${NODEJS_KEYRING}",
+      'echo "${NODEJS_KEYRING_SHA256}  ${NODEJS_KEYRING}" | sha256sum -c - || { echo "Node.js keyring SHA256 mismatch — bump NODEJS_KEYRING_SHA256 in web-ui-construct.ts to the value at https://github.com/nodejs/release-keys/raw/HEAD/gpg/pubring.kbx" >&2; exit 1; }',
+      "cd /tmp",
+      "curl -fsSL -O https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt",
+      "curl -fsSL -O https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt.sig",
+      "gpgv --keyring ${NODEJS_KEYRING} SHASUMS256.txt.sig SHASUMS256.txt || { echo 'GPG signature verification of SHASUMS256.txt failed' >&2; exit 1; }",
+      // Pull the linux-x64 .tar.xz line out of the verified checksums
+      // file. There is exactly one matching line per release.
+      'NODE_LINE=$(grep -E "node-v24\\.[0-9]+\\.[0-9]+-linux-x64\\.tar\\.xz$" SHASUMS256.txt)',
+      '[ -n "$NODE_LINE" ] || { echo "Could not find linux-x64 tarball entry in SHASUMS256.txt" >&2; exit 1; }',
+      "NODE_FILENAME=$(echo \"$NODE_LINE\" | awk '{print $2}')",
+      'echo "Installing $NODE_FILENAME"',
+      // Download the tarball, verify against the GPG-verified hash, and
+      // extract to /usr/local (already on the system PATH).
+      'curl -fsSL -O "https://nodejs.org/dist/latest-v24.x/${NODE_FILENAME}"',
+      'echo "$NODE_LINE" | sha256sum -c - || { echo "Node.js tarball checksum mismatch" >&2; exit 1; }',
+      'tar -xJf "$NODE_FILENAME" -C /usr/local --strip-components=1',
+      'rm -f "$NODE_FILENAME" SHASUMS256.txt SHASUMS256.txt.sig "$NODEJS_KEYRING"',
+      "cd -",
+
+      // Verify installations
+      "echo 'Verifying installations:'",
+      "nginx -v",
+      "node --version",
+      "npm --version",
+      "which node",
+      "which npm",
+
+      // Install PM2 globally
+      "echo 'Installing PM2 globally'",
+      "npm install -g pm2",
+
+      // Verify PM2
+      "echo 'Verifying PM2 installation:'",
+      "pm2 --version",
+      "which pm2",
+
+      // Configure nginx
+      "echo 'Configuring Nginx'",
+      this.getNginxConfig(),
+
       // Set up PM2 environment
       "echo 'Setting up PM2 environment'",
       "mkdir -p /root/.pm2",
@@ -553,10 +583,27 @@ export class WebUIConstruct extends Construct {
       "pm2 set pm2-logrotate:max_size 10M",
       "pm2 set pm2-logrotate:retain 5",
 
+      // Fetch the NextAuth session-signing secret from AWS Secrets Manager
+      // at boot. The plaintext is held only in this shell variable for the
+      // duration of the user-data script; once the PM2 ecosystem file is
+      // written, the variable is overwritten so it does not linger in the
+      // process environment of any later commands.
+      "echo 'Fetching NextAuth secret from Secrets Manager'",
+      `NEXTAUTH_SECRET=$(aws secretsmanager get-secret-value --secret-id ${nextAuthSecret.secretArn} --query SecretString --output text --region ${Stack.of(this).region})`,
+      'if [ -z "$NEXTAUTH_SECRET" ]; then',
+      "  echo 'ERROR: Failed to retrieve NextAuth secret from Secrets Manager' >&2",
+      "  exit 1",
+      "fi",
+
       // PM2 ecosystem config. The `env` block is the runtime configuration
       // for the Next.js server. Values are JSON.stringify'd to preserve
       // any quotes, backslashes, or newlines.
-      "cat << 'EOF' > /var/www/html/ecosystem.config.js",
+      //
+      // The heredoc is intentionally unquoted (<< EOF, not << 'EOF') so the
+      // shell expands $NEXTAUTH_SECRET into the file. None of the other
+      // values contain a literal `$`, so this expansion is safe; if any
+      // future env var contains a `$`, it must be escaped as `\$`.
+      "cat << EOF > /var/www/html/ecosystem.config.js",
       "module.exports = {",
       "  apps: [{",
       "    name: 'next-app',",
@@ -581,11 +628,15 @@ export class WebUIConstruct extends Construct {
       `      OIDC_AUTHORITY: ${JSON.stringify(this.config.authority || "")},`,
       `      NEXTAUTH_URL: ${JSON.stringify(this.config.authSuccessUrl || "")},`,
       `      NEXTAUTH_CLIENT_ID: ${JSON.stringify(this.config.authClientId || "")},`,
-      `      NEXTAUTH_SECRET: ${JSON.stringify(this.config.authSecret || "")}`,
+      '      NEXTAUTH_SECRET: "$NEXTAUTH_SECRET"',
       "    }",
       "  }]",
       "}",
       "EOF",
+
+      // Scrub the secret from the shell environment so it does not bleed
+      // into any later commands run during user-data execution.
+      "unset NEXTAUTH_SECRET",
 
       // Start the application using ecosystem config
       "cd /var/www/html",
@@ -641,6 +692,12 @@ export class WebUIConstruct extends Construct {
         ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy")
       ]
     });
+
+    // Grant the EC2 instance role read access to the NextAuth secret so the
+    // user-data script can fetch its value at boot. The grant is scoped to
+    // this single secret ARN (and its versions) — secretsmanager:GetSecretValue
+    // is the only action required to read the current value.
+    nextAuthSecret.grantRead(ec2Role);
 
     // Create Launch Template
     const launchTemplate = new LaunchTemplate(this, "WebAppLaunchTemplate", {
@@ -1096,14 +1153,23 @@ exports.handler = async (event, context) => {
     if (requestType === 'Create' || requestType === 'Update') {
       console.log('Starting instance refresh for ASG:', asgName);
 
-      // Start instance refresh
+      // Launch-before-terminate refresh: provision a full set of new
+      // instances alongside the existing fleet, wait for them to become
+      // healthy, then drain the old ones in a single batch.
+      // - MinHealthyPercentage: 100 keeps every existing instance healthy
+      //   until replacements are in service (no capacity dip mid-refresh).
+      // - MaxHealthyPercentage: 200 lets the ASG temporarily run at 2x
+      //   the desired capacity while replacements warm up.
+      // No checkpoint percentages/delays — those exist for staged rollouts
+      // with alarm-driven halts, which this app does not have. We accept a
+      // brief 2x EC2 cost during deploy in exchange for ~half the refresh
+      // duration and zero served-traffic gap.
       const startCommand = new StartInstanceRefreshCommand({
         AutoScalingGroupName: asgName,
         Preferences: {
-          MinHealthyPercentage: 50,
-          InstanceWarmup: 120, // 2 minutes
-          CheckpointPercentages: [20, 50, 100], // Report progress at these percentages
-          CheckpointDelay: 60 // Wait 1 minute between checkpoints
+          MinHealthyPercentage: 100,
+          MaxHealthyPercentage: 200,
+          InstanceWarmup: 120 // 2 minutes
         }
       });
 
@@ -1226,6 +1292,15 @@ exports.handler = async (event, context) => {
   private setup(props: WebUIProps): void {
     const inputConfig: Partial<WebAppConfig> = props.config ?? {};
 
+    if (!inputConfig.hostedZone) {
+      throw new Error(
+        "WebAppConfig.hostedZone is required. The web app is served over " +
+          "HTTPS only and needs a Route 53 hosted zone in this AWS account " +
+          "for ACM certificate issuance. Set webAppConfig.hostedZone (or " +
+          "DOMAIN_HOSTED_ZONE_NAME) in deployment.json."
+      );
+    }
+
     // Apply defaults for all required fields
     this.config = {
       // Optional fields with defaults
@@ -1236,9 +1311,10 @@ exports.handler = async (event, context) => {
       albSecurityGroupId: inputConfig.albSecurityGroupId,
       ec2SecurityGroupId: inputConfig.ec2SecurityGroupId,
 
-      // Required fields - must provide defaults or throw errors
-      hostedZone: inputConfig.hostedZone ?? "localhost",
-      domainName: inputConfig.domainName ?? "localhost",
+      // Required hosted zone (validated above) and optional domain name
+      // (falls back to the hosted zone apex when not specified).
+      hostedZone: inputConfig.hostedZone,
+      domainName: inputConfig.domainName ?? inputConfig.hostedZone,
       tileServerUrl:
         inputConfig.tileServerUrl ?? "https://api.example.com/tiles",
       stacCatalogUrl:
@@ -1249,14 +1325,13 @@ exports.handler = async (event, context) => {
       modelRunnerApiUrl:
         inputConfig.modelRunnerApiUrl ?? "https://api.example.com/model-runner",
       geoAgentsMcpUrl: inputConfig.geoAgentsMcpUrl ?? "",
-      authSuccessUrl: inputConfig.authSuccessUrl ?? "http://localhost:3000",
+      authSuccessUrl:
+        inputConfig.authSuccessUrl ??
+        `https://${inputConfig.domainName ?? inputConfig.hostedZone}`,
       authClientId: inputConfig.authClientId ?? "default-client",
-      authSecret: inputConfig.authSecret ?? "default-secret",
       authority: inputConfig.authority ?? "https://auth.example.com",
       detectionBridgeBucket: inputConfig.detectionBridgeBucket
     };
-
-    // Validate critical configuration - localhost defaults indicate development environment
 
     // Setup a removal policy
     this.removalPolicy = props.isProd

@@ -384,7 +384,9 @@ export class WebAppUtilityConstruct extends Construct {
 
     // Create the detection bridge S3 bucket
     this.detectionBridgeBucket = new Bucket(this, "DetectionBridgeBucket", {
-      bucketName: `webapp-detection-bridge-${props.account.id}`,
+      bucketName:
+        this.config.detectionBridgeBucketName ||
+        `webapp-detection-bridge-${props.account.id}`,
       encryption: BucketEncryption.S3_MANAGED,
       removalPolicy: this.removalPolicy,
       autoDeleteObjects: !props.isProd,
@@ -523,19 +525,6 @@ export class WebAppUtilityConstruct extends Construct {
         }
       })
     );
-
-    // Auto-add bridge bucket to the allowed bucket list so it appears in the
-    // output bucket dropdown and the utility Lambda can generate presigned URLs for it.
-    if (!this.config.allowedBucketArns) {
-      this.config.allowedBucketArns = [];
-    }
-    if (
-      !this.config.allowedBucketArns.includes(
-        this.detectionBridgeBucket.bucketArn
-      )
-    ) {
-      this.config.allowedBucketArns.push(this.detectionBridgeBucket.bucketArn);
-    }
   }
 
   private createQuotaCodesBucket(props: WebAppUtilityProps): void {
@@ -702,11 +691,21 @@ export class WebAppUtilityConstruct extends Construct {
     // Quota tracking is always enabled
     const enableQuotaTracking = true;
 
+    // Build the list of CORS origins for both the FastAPI middleware and the
+    // bucket CORS rules emitted by ensure_bucket_cors(). The web app domain
+    // is always included (passed in via props); localhost:3000 is added for
+    // non-prod so the Next.js dev server can exercise the same CORS path.
+    const corsOrigins = [...(props.corsAllowedOrigins ?? [])];
+    if (!props.isProd && !corsOrigins.includes("http://localhost:3000")) {
+      corsOrigins.push("http://localhost:3000");
+    }
+
     // Build environment variables object
     const environment: { [key: string]: string } = {
       RESTRICT_BUCKET_ACCESS: this.config.restrictBucketAccess.toString(),
       ALLOWED_BUCKET_ARNS: (this.config.allowedBucketArns || []).join(","),
       ENABLE_CORS: (!props.isProd).toString(),
+      CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
       SHOW_ALL_MODEL_VARIANTS: "false",
       ENABLE_QUOTA_TRACKING: enableQuotaTracking.toString(),
       QUOTA_CODES_BUCKET: this.quotaCodesBucket.bucketName,
