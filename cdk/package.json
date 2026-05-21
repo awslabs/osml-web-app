@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@cdklabs/cdk-enterprise-iac": "^0.1.0",
-    "aws-cdk-lib": "^2.253.0",
+    "aws-cdk-lib": "^2.256.0",
     "constructs": "^10.4.2",
     "osml-cdk-constructs": "^2.1.0",
     "source-map-support": "^0.5.21"
