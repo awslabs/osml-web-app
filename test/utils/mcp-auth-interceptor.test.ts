@@ -1,22 +1,21 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 /**
- * Tests for mcp-auth-interceptor.ts.
- * Covers init, URL matching, token injection, cleanup, and updateMcpServerUrls.
+ * Tests for mcp-auth-interceptor.ts. Covers init, three auth modes, allowlist
+ * re-validation, tile-server carve-out, cleanup, and updateMcpServerUrls.
  *
- * Note: jsdom doesn't have Response, so we use plain objects as mock responses.
+ * jsdom doesn't have Response, so plain objects are used as mock responses.
  */
 
-// Save original fetch before any module loads
+import type { McpServerConfig } from "@/hooks/use-mcp";
+
 const originalWindowFetch = global.fetch;
 
-// Type for the mcp-auth-interceptor module
-interface McpAuthInterceptorModule {
-  initMcpAuthInterceptor: (serverUrls: string[]) => void;
+interface InterceptorModule {
+  initMcpAuthInterceptor: (servers: McpServerConfig[]) => void;
   cleanupMcpAuthInterceptor: () => void;
-  updateMcpServerUrls: (serverUrls: string[]) => void;
+  updateMcpServerUrls: (servers: McpServerConfig[]) => void;
 }
 
-// Helper to create a mock response (jsdom has no Response class)
 function mockResponse(
   body: string,
   opts: { status?: number; headers?: Record<string, string> } = {}
@@ -31,120 +30,289 @@ function mockResponse(
   };
 }
 
+function makeServer(
+  overrides: Partial<McpServerConfig> & { url: string }
+): McpServerConfig {
+  return {
+    id: overrides.id ?? "srv",
+    name: overrides.name ?? "Server",
+    enabled: overrides.enabled ?? true,
+    connectionStatus: overrides.connectionStatus ?? "active",
+    autoApprovedTools: overrides.autoApprovedTools ?? [],
+    disabledTools: overrides.disabledTools ?? [],
+    authMode: overrides.authMode ?? "session",
+    ...overrides
+  };
+}
+
 beforeEach(() => {
   jest.resetModules();
-  // Restore original fetch
+  localStorage.clear();
   global.fetch = originalWindowFetch;
   if (typeof window !== "undefined") {
     window.fetch = originalWindowFetch;
   }
 });
 
-describe("mcp-auth-interceptor", () => {
-  it("initMcpAuthInterceptor should patch window.fetch", () => {
+describe("mcp-auth-interceptor - init/cleanup", () => {
+  it("patches window.fetch on init", () => {
     const { initMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
     const before = window.fetch;
-
-    initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
-
+    initMcpAuthInterceptor([
+      makeServer({ url: "https://mcp.amazonaws.com/sse" })
+    ]);
     expect(window.fetch).not.toBe(before);
   });
 
-  it("cleanupMcpAuthInterceptor should restore original fetch", () => {
-    // Set a known fetch function first
-    const knownFetch = jest.fn();
-    window.fetch = knownFetch;
-
+  it("restores fetch on cleanup", () => {
+    const known = jest.fn();
+    window.fetch = known;
     const { initMcpAuthInterceptor, cleanupMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-
-    initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
-    // fetch is now patched (different from knownFetch)
-    expect(window.fetch).not.toBe(knownFetch);
-
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({ url: "https://mcp.amazonaws.com/sse" })
+    ]);
     cleanupMcpAuthInterceptor();
-    // After cleanup, fetch should be restored to knownFetch
-    expect(window.fetch).toBe(knownFetch);
+    expect(window.fetch).toBe(known);
   });
+});
 
-  it("should pass through non-MCP requests without modification", async () => {
+describe("mcp-auth-interceptor - request matching", () => {
+  it("passes through non-MCP requests unchanged", async () => {
     const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
     window.fetch = mockFetch;
 
     const { initMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-    initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({ url: "https://mcp.amazonaws.com/sse" })
+    ]);
 
     await window.fetch("https://other-api.com/data");
-
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url] = mockFetch.mock.calls[0] as [string];
-    expect(url).toBe("https://other-api.com/data");
   });
 
-  it("should pass through relative URLs without interception", async () => {
+  it("passes through relative URLs unchanged", async () => {
     const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
     window.fetch = mockFetch;
 
     const { initMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-    initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({ url: "https://mcp.amazonaws.com/sse" })
+    ]);
 
     await window.fetch("/api/local");
-
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("should inject auth header for MCP server requests", async () => {
-    const mockFetch = jest.fn().mockImplementation((input: string) => {
-      if (typeof input === "string" && input === "/api/auth/session") {
-        return Promise.resolve(
-          mockResponse(JSON.stringify({ accessToken: "jwt-token-123" }), {
-            headers: { "Content-Type": "application/json" }
-          })
-        );
-      }
-      return Promise.resolve(mockResponse("mcp response"));
-    });
-    window.fetch = mockFetch;
-
-    const { initMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-    initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
-
-    await window.fetch("https://mcp.example.com/messages");
-
-    // Should have called fetch for session + the actual request
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-
-    // The actual MCP request should have Authorization header
-    const mcpCall = mockFetch.mock.calls[1] as [string, RequestInit];
-    const headers = mcpCall[1]?.headers as Headers;
-    expect(headers.get("Authorization")).toBe("Bearer jwt-token-123");
-  });
-
-  it("should not intercept tile server requests even if origin matches", async () => {
+  it("skips tile-server requests on a registered API Gateway origin", async () => {
     const mockFetch = jest.fn().mockResolvedValue(mockResponse("tile data"));
     window.fetch = mockFetch;
 
     const { initMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
     initMcpAuthInterceptor([
-      "https://api.execute-api.us-east-1.amazonaws.com/mcp"
+      makeServer({
+        url: "https://api.execute-api.us-east-1.amazonaws.com/mcp"
+      })
     ]);
 
     await window.fetch(
       "https://api.execute-api.us-east-1.amazonaws.com/tiles/0/0/0.png"
     );
-
-    // Should pass through without session fetch
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("updateMcpServerUrls should update the URL set", async () => {
+  it("skips servers using the local:// pseudo-scheme", async () => {
+    const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([makeServer({ url: "local://viewport" })]);
+
+    await window.fetch("https://other.example.com/foo");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("mcp-auth-interceptor - auth modes", () => {
+  it("authMode 'none': pass through with no Authorization header", async () => {
+    const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "none"
+      })
+    ]);
+
+    await window.fetch("https://geo.amazonaws.com/mcp/messages");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // No /api/auth/session call, no Authorization header
+    const init = mockFetch.mock.calls[0][1] as RequestInit | undefined;
+    const headers = init?.headers as Headers | undefined;
+    expect(headers?.get("Authorization") ?? null).toBeNull();
+  });
+
+  it("authMode 'session': fetches session and attaches bearer token", async () => {
     const mockFetch = jest.fn().mockImplementation((input: string) => {
-      if (typeof input === "string" && input === "/api/auth/session") {
+      if (input === "/api/auth/session") {
+        return Promise.resolve(
+          mockResponse(JSON.stringify({ accessToken: "session-jwt" }))
+        );
+      }
+      return Promise.resolve(mockResponse("mcp ok"));
+    });
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "session"
+      })
+    ]);
+
+    await window.fetch("https://geo.amazonaws.com/mcp/messages");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const headers = mockFetch.mock.calls[1][1].headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer session-jwt");
+  });
+
+  it("authMode 'custom': reads token from mcp-token-store", async () => {
+    const { setToken } =
+      require("@/services/mcp-token-store") as typeof import("@/services/mcp-token-store");
+    setToken("custom-srv", "stored-secret");
+
+    const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        id: "custom-srv",
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "custom"
+      })
+    ]);
+
+    await window.fetch("https://geo.amazonaws.com/mcp/messages");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const headers = mockFetch.mock.calls[0][1].headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer stored-secret");
+  });
+
+  it("authMode 'custom' with missing token: passes through unauthenticated", async () => {
+    const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        id: "no-token-srv",
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "custom"
+      })
+    ]);
+
+    await window.fetch("https://geo.amazonaws.com/mcp/messages");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const init = mockFetch.mock.calls[0][1] as RequestInit | undefined;
+    const headers = init?.headers as Headers | undefined;
+    expect(headers?.get("Authorization") ?? null).toBeNull();
+  });
+
+  it("authMode 'session' with session fetch failure: passes through unauthenticated", async () => {
+    const mockFetch = jest.fn().mockImplementation((input: string) => {
+      if (input === "/api/auth/session") {
+        return Promise.reject(new Error("network error"));
+      }
+      return Promise.resolve(mockResponse("ok"));
+    });
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "session"
+      })
+    ]);
+
+    const res = await window.fetch("https://geo.amazonaws.com/mcp/messages");
+    expect(res).toBeDefined();
+    // Session attempt + actual request, but no auth header
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("overwrites caller-supplied Authorization header", async () => {
+    const mockFetch = jest.fn().mockImplementation((input: string) => {
+      if (input === "/api/auth/session") {
+        return Promise.resolve(
+          mockResponse(JSON.stringify({ accessToken: "real-token" }))
+        );
+      }
+      return Promise.resolve(mockResponse("ok"));
+    });
+    window.fetch = mockFetch;
+
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "session"
+      })
+    ]);
+
+    await window.fetch("https://geo.amazonaws.com/mcp/messages", {
+      headers: { Authorization: "Bearer attacker-token" }
+    });
+    const headers = mockFetch.mock.calls[1][1].headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer real-token");
+  });
+});
+
+describe("mcp-auth-interceptor - allowlist defense in depth", () => {
+  it("refuses to attach auth when registered host fails the allowlist", async () => {
+    const mockFetch = jest.fn().mockResolvedValue(mockResponse("ok"));
+    window.fetch = mockFetch;
+
+    // Server registers under a host outside the default allowlist. The map is
+    // populated, but the fetch hook re-validates and refuses to attach auth.
+    const { initMcpAuthInterceptor } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://evil.example.com/mcp",
+        authMode: "session"
+      })
+    ]);
+
+    await window.fetch("https://evil.example.com/mcp/messages");
+    // No /api/auth/session call, no Authorization header — pass through only.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const init = mockFetch.mock.calls[0][1] as RequestInit | undefined;
+    expect(
+      (init?.headers as Headers | undefined)?.get("Authorization") ?? null
+    ).toBeNull();
+  });
+});
+
+describe("mcp-auth-interceptor - updateMcpServerUrls", () => {
+  it("replaces the registered set", async () => {
+    const mockFetch = jest.fn().mockImplementation((input: string) => {
+      if (input === "/api/auth/session") {
         return Promise.resolve(
           mockResponse(JSON.stringify({ accessToken: "tok" }))
         );
@@ -154,128 +322,70 @@ describe("mcp-auth-interceptor", () => {
     window.fetch = mockFetch;
 
     const { initMcpAuthInterceptor, updateMcpServerUrls } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
 
-    initMcpAuthInterceptor(["https://old-server.com/mcp"]);
-    updateMcpServerUrls(["https://new-server.com/mcp"]);
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://old.amazonaws.com/mcp",
+        authMode: "session"
+      })
+    ]);
+    updateMcpServerUrls([
+      makeServer({
+        url: "https://new.amazonaws.com/mcp",
+        authMode: "session"
+      })
+    ]);
 
-    // Request to old server should NOT be intercepted
-    await window.fetch("https://old-server.com/messages");
+    // Old host no longer registered — pass-through only.
+    await window.fetch("https://old.amazonaws.com/mcp/messages");
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
     mockFetch.mockClear();
 
-    // Request to new server SHOULD be intercepted
-    await window.fetch("https://new-server.com/messages");
+    // New host is registered — session fetch + actual request.
+    await window.fetch("https://new.amazonaws.com/mcp/messages");
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("should gracefully handle session fetch failure", async () => {
+  it("stops attaching auth to a previously-registered origin after it is removed", async () => {
     const mockFetch = jest.fn().mockImplementation((input: string) => {
-      if (typeof input === "string" && input === "/api/auth/session") {
-        return Promise.reject(new Error("Network error"));
+      if (input === "/api/auth/session") {
+        return Promise.resolve(
+          mockResponse(JSON.stringify({ accessToken: "tok" }))
+        );
       }
-      return Promise.resolve(mockResponse("fallback"));
+      return Promise.resolve(mockResponse("ok"));
     });
     window.fetch = mockFetch;
 
-    const { initMcpAuthInterceptor } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-    initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
+    const { initMcpAuthInterceptor, updateMcpServerUrls } =
+      require("@/utils/mcp-auth-interceptor") as InterceptorModule;
 
-    // Should not throw — falls back to unauthenticated request
-    const response = await window.fetch("https://mcp.example.com/messages");
-    expect(response).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Branch coverage: interceptor conditional paths (lines 17-30, 38-39, 61-82)
-// ---------------------------------------------------------------------------
-
-describe("mcp-auth-interceptor - branch coverage", () => {
-  const origFetch = global.fetch;
-
-  afterEach(() => {
-    const { cleanupMcpAuthInterceptor: cleanup } =
-      require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-    cleanup();
-    global.fetch = origFetch;
-    if (typeof window !== "undefined") window.fetch = origFetch;
-  });
-
-  it("should add auth header to MCP server requests", async () => {
-    const mockFetch = jest
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ accessToken: "test-token" })
+    initMcpAuthInterceptor([
+      makeServer({
+        url: "https://geo.amazonaws.com/mcp",
+        authMode: "session"
       })
-      .mockResolvedValueOnce({ ok: true, status: 200 });
-    global.fetch = mockFetch;
-    window.fetch = mockFetch;
+    ]);
 
-    jest.isolateModules(() => {
-      const { initMcpAuthInterceptor } =
-        require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-      initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
-    });
-
-    await window.fetch("https://mcp.example.com/sse/messages", {
-      method: "POST"
-    });
+    // First call: server registered, session fetch + actual request, header attached.
+    await window.fetch("https://geo.amazonaws.com/mcp/messages");
     expect(mockFetch).toHaveBeenCalledTimes(2);
-  });
+    const firstHeaders = mockFetch.mock.calls[1][1].headers as Headers;
+    expect(firstHeaders.get("Authorization")).toBe("Bearer tok");
 
-  it("should skip non-MCP requests", async () => {
-    const mockFetch = jest.fn().mockResolvedValue({ ok: true });
-    global.fetch = mockFetch;
-    window.fetch = mockFetch;
+    mockFetch.mockClear();
 
-    jest.isolateModules(() => {
-      const { initMcpAuthInterceptor } =
-        require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-      initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
-    });
+    // User removes the server: registered set becomes empty.
+    updateMcpServerUrls([]);
 
-    await window.fetch("https://other-api.com/data");
+    // Second call to the same origin must not get auth and must not fetch session.
+    await window.fetch("https://geo.amazonaws.com/mcp/messages");
     expect(mockFetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("should handle session fetch failure gracefully", async () => {
-    const mockFetch = jest
-      .fn()
-      .mockRejectedValueOnce(new Error("Network error"))
-      .mockResolvedValueOnce({ ok: true });
-    global.fetch = mockFetch;
-    window.fetch = mockFetch;
-
-    jest.isolateModules(() => {
-      const { initMcpAuthInterceptor } =
-        require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-      initMcpAuthInterceptor(["https://mcp.example.com/sse"]);
-    });
-
-    const response = await window.fetch("https://mcp.example.com/sse/messages");
-    expect(response).toBeDefined();
-  });
-
-  it("should skip AWS API Gateway tile requests", async () => {
-    const mockFetch = jest.fn().mockResolvedValue({ ok: true });
-    global.fetch = mockFetch;
-    window.fetch = mockFetch;
-
-    jest.isolateModules(() => {
-      const { initMcpAuthInterceptor } =
-        require("@/utils/mcp-auth-interceptor") as McpAuthInterceptorModule;
-      initMcpAuthInterceptor([
-        "https://abc123.execute-api.us-east-1.amazonaws.com"
-      ]);
-    });
-
-    await window.fetch(
-      "https://abc123.execute-api.us-east-1.amazonaws.com/tiles/1/2/3.png"
-    );
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const init = mockFetch.mock.calls[0][1] as RequestInit | undefined;
+    expect(
+      (init?.headers as Headers | undefined)?.get("Authorization") ?? null
+    ).toBeNull();
   });
 });

@@ -30,6 +30,23 @@ describe("middleware", () => {
     expect(pattern).toContain("_next");
     expect(pattern).toContain("favicon");
   });
+
+  it("matcher pattern excludes NextAuth and asset paths but matches user routes", () => {
+    // Convert Next's matcher to a real regex and verify the negative-lookahead
+    // actually rejects the paths it claims to. This guards against accidental
+    // weakening of the exclusion list.
+    const pattern = new RegExp(`^${config.matcher[0]}$`);
+
+    expect(pattern.test("/")).toBe(true);
+    expect(pattern.test("/dashboard")).toBe(true);
+    expect(pattern.test("/api/jobs")).toBe(true);
+
+    expect(pattern.test("/api/auth")).toBe(false);
+    expect(pattern.test("/api/auth/signin")).toBe(false);
+    expect(pattern.test("/api/auth/callback/oidc")).toBe(false);
+    expect(pattern.test("/_next/static/foo.js")).toBe(false);
+    expect(pattern.test("/favicon.ico")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -71,6 +88,22 @@ describe("middleware - withAuth integration", () => {
     const authorizedFn = call[1].callbacks.authorized;
 
     expect(authorizedFn({ token: null })).toBe(false);
+  });
+
+  it("authorized callback rejects undefined and falsy token shapes", () => {
+    // NextAuth surfaces an absent or expired session as a null/undefined
+    // token after its own decoding step. Tampered tokens that fail signature
+    // verification arrive the same way. Both must fall through to false.
+    const call = (withAuth as jest.Mock).mock.calls[0] as [
+      () => void,
+      { callbacks: { authorized: (params: { token: unknown }) => boolean } }
+    ];
+    const authorizedFn = call[1].callbacks.authorized;
+
+    expect(authorizedFn({ token: undefined })).toBe(false);
+    expect(authorizedFn({ token: "" })).toBe(false);
+    expect(authorizedFn({ token: 0 })).toBe(false);
+    expect(authorizedFn({ token: false })).toBe(false);
   });
 
   it("middleware function should be callable", () => {

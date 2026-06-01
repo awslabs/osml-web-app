@@ -4,6 +4,14 @@ import type { Tool } from "use-mcp/react";
 
 import { siteConfig } from "@/config/site";
 import { McpPreferences, McpServerConfig } from "@/hooks/use-mcp";
+import {
+  clearAllTokens,
+  clearToken,
+  setToken
+} from "@/services/mcp-token-store";
+import { ConfirmationRequiredPayload } from "@/types/chat";
+import { parseMcpDefaultServers } from "@/utils/mcp-default-servers";
+import { validateMcpServerUrl } from "@/utils/mcp-server-validation";
 
 interface McpState {
   servers: McpServerConfig[];
@@ -20,6 +28,14 @@ interface McpState {
       args: Record<string, unknown>;
     } | null;
   };
+  /**
+   * In-flight destructive-action confirmation. Null when no card is being
+   * shown. Driven by use-tool-chain.ts; the card renders from this state.
+   */
+  destructiveConfirmation: {
+    requestId: string;
+    payload: ConfirmationRequiredPayload;
+  } | null;
   isProcessingToolChain: boolean;
 }
 
@@ -29,39 +45,8 @@ const defaultPreferences: McpPreferences = {
   overrideAllApprovals: false
 };
 
-// Default MCP server configurations
 const defaultServers: McpServerConfig[] = [
-  // Conditionally include OSML geo agent MCP server if URL is configured
-  ...(siteConfig.mcp.geo_agents_url
-    ? [
-        {
-          id: "osml-geo-agents",
-          name: "OSML Geo Agent",
-          url: siteConfig.mcp.geo_agents_url,
-          description:
-            "OSML geospatial analysis tools including buffering, clustering, and spatial operations",
-          enabled: true,
-          connectionStatus: "active" as const,
-          autoApprovedTools: [] as string[],
-          disabledTools: [] as string[]
-        }
-      ]
-    : []),
-  // Conditionally include STAC Loader MCP server if URL is configured
-  ...(siteConfig.stac_loader_mcp_url
-    ? [
-        {
-          id: "stac-loader",
-          name: "STAC Data Loader",
-          url: siteConfig.stac_loader_mcp_url,
-          description: "Load STAC items from URL references into the workspace",
-          enabled: true,
-          connectionStatus: "active" as const,
-          autoApprovedTools: [] as string[],
-          disabledTools: [] as string[]
-        }
-      ]
-    : []),
+  ...parseMcpDefaultServers(siteConfig.mcp.defaultServersRaw),
   {
     id: "local-viewport-server",
     name: "Local Viewport Server",
@@ -70,7 +55,8 @@ const defaultServers: McpServerConfig[] = [
     enabled: true,
     connectionStatus: "active",
     autoApprovedTools: ["get_viewport"],
-    disabledTools: []
+    disabledTools: [],
+    authMode: "none"
   }
 ];
 
@@ -89,6 +75,7 @@ const initialState: McpState = {
     requestId: null,
     tool: null
   },
+  destructiveConfirmation: null,
   isProcessingToolChain: false
 };
 
@@ -127,6 +114,11 @@ const mcpSlice = createSlice({
   reducers: {
     // Server management actions
     addServer: (state, action: PayloadAction<McpServerConfig>) => {
+      const validation = validateMcpServerUrl(action.payload.url);
+      if (!validation.ok) {
+        state.error = validation.reason ?? "Invalid MCP server URL.";
+        return;
+      }
       state.servers.push(action.payload);
       if (action.payload.enabled) {
         state.preferences.enabledServers.push(action.payload);
@@ -134,6 +126,11 @@ const mcpSlice = createSlice({
     },
 
     updateServer: (state, action: PayloadAction<McpServerConfig>) => {
+      const validation = validateMcpServerUrl(action.payload.url);
+      if (!validation.ok) {
+        state.error = validation.reason ?? "Invalid MCP server URL.";
+        return;
+      }
       const index = state.servers.findIndex((s) => s.id === action.payload.id);
 
       if (index !== -1) {
@@ -436,6 +433,21 @@ const mcpSlice = createSlice({
       };
     },
 
+    // Destructive confirmation card management
+    showDestructiveConfirmation: (
+      state,
+      action: PayloadAction<{
+        requestId: string;
+        payload: ConfirmationRequiredPayload;
+      }>
+    ) => {
+      state.destructiveConfirmation = action.payload;
+    },
+
+    closeDestructiveConfirmation: (state) => {
+      state.destructiveConfirmation = null;
+    },
+
     // Tool Chain Processing State
     setProcessingToolChain: (state, action: PayloadAction<boolean>) => {
       state.isProcessingToolChain = action.payload;
@@ -460,6 +472,70 @@ const mcpSlice = createSlice({
   }
 });
 
+type McpThunk<R = void> = (
+  dispatch: (action: unknown) => unknown,
+  getState: () => { mcp: McpState }
+) => R;
+
+/**
+ * Add a server with optional custom-mode token. Validates URL first so the
+ * token is never persisted for a server that fails to register.
+ */
+export function addServerWithToken(
+  server: McpServerConfig,
+  customToken?: string
+): McpThunk {
+  return (dispatch) => {
+    if (!validateMcpServerUrl(server.url).ok) {
+      dispatch(mcpSlice.actions.addServer(server));
+      return;
+    }
+    if (server.authMode === "custom" && customToken) {
+      setToken(server.id, customToken);
+    }
+    dispatch(mcpSlice.actions.addServer(server));
+  };
+}
+
+/**
+ * Update a server, syncing the token store. Skips token writes when the URL
+ * is invalid; clears the prior custom token when authMode flips away from custom.
+ */
+export function updateServerWithToken(
+  server: McpServerConfig,
+  customToken?: string
+): McpThunk {
+  return (dispatch, getState) => {
+    if (!validateMcpServerUrl(server.url).ok) {
+      dispatch(mcpSlice.actions.updateServer(server));
+      return;
+    }
+    const prev = getState().mcp.servers.find((s) => s.id === server.id);
+    if (server.authMode === "custom") {
+      if (customToken) setToken(server.id, customToken);
+    } else if (prev?.authMode === "custom") {
+      clearToken(server.id);
+    }
+    dispatch(mcpSlice.actions.updateServer(server));
+  };
+}
+
+/** Remove a server and its custom token, if any. */
+export function removeServerWithToken(serverId: string): McpThunk {
+  return (dispatch) => {
+    clearToken(serverId);
+    dispatch(mcpSlice.actions.removeServer(serverId));
+  };
+}
+
+/** Reset to defaults and wipe all custom tokens. */
+export function resetToDefaultsWithTokens(): McpThunk {
+  return (dispatch) => {
+    clearAllTokens();
+    dispatch(mcpSlice.actions.resetToDefaults());
+  };
+}
+
 export const {
   addServer,
   updateServer,
@@ -480,6 +556,8 @@ export const {
   clearServerLiveState,
   showToolApprovalModal,
   closeToolApprovalModal,
+  showDestructiveConfirmation,
+  closeDestructiveConfirmation,
   setProcessingToolChain
 } = mcpSlice.actions;
 
@@ -500,6 +578,8 @@ export const selectMcpConnectionCount = (state: { mcp: McpState }) =>
   state.mcp.connectionCount;
 export const selectToolApprovalModal = (state: { mcp: McpState }) =>
   state.mcp.toolApprovalModal;
+export const selectDestructiveConfirmation = (state: { mcp: McpState }) =>
+  state.mcp.destructiveConfirmation;
 export const selectIsProcessingToolChain = (state: { mcp: McpState }) =>
   state.mcp.isProcessingToolChain;
 

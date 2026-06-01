@@ -18,7 +18,8 @@ const defaultProps = {
   servers: [],
   preferences: { enabledServers: [], overrideAllApprovals: false },
   onUpdateServers: jest.fn(),
-  onUpdatePreferences: jest.fn()
+  onUpdatePreferences: jest.fn(),
+  onAddServer: jest.fn()
 };
 
 describe("McpServerManagement", () => {
@@ -172,8 +173,9 @@ describe("McpServerManagement - additional coverage", () => {
       <McpServerManagement
         servers={servers}
         preferences={preferences}
-        onUpdateServers={onUpdateServers}
+        onAddServer={jest.fn()}
         onUpdatePreferences={onUpdatePreferences}
+        onUpdateServers={onUpdateServers}
       />
     );
 
@@ -195,8 +197,9 @@ describe("McpServerManagement - additional coverage", () => {
       <McpServerManagement
         servers={servers}
         preferences={preferences}
-        onUpdateServers={onUpdateServers}
+        onAddServer={jest.fn()}
         onUpdatePreferences={onUpdatePreferences}
+        onUpdateServers={onUpdateServers}
       />
     );
 

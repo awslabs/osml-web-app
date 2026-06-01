@@ -2,7 +2,6 @@
 "use client";
 
 import { Button } from "@heroui/button";
-import { Input, Textarea } from "@heroui/input";
 import {
   Modal,
   ModalBody,
@@ -13,13 +12,13 @@ import {
 } from "@heroui/modal";
 import { Switch } from "@heroui/switch";
 import { Tooltip } from "@heroui/tooltip";
-import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
+import { AddServerModal } from "@/components/mcp/add-server-modal";
 import { McpServerManagement } from "@/components/mcp/mcp-server-management";
 import { McpPreferences, McpServerConfig } from "@/hooks/use-mcp";
 import {
-  addServer,
+  addServerWithToken,
   removeServer,
   selectMcpPreferences,
   selectMcpServers,
@@ -44,45 +43,14 @@ export const McpServerManagementModal = ({
   const {
     isOpen: isAddServerOpen,
     onOpen: onOpenAddServer,
-    onOpenChange: onAddServerOpenChange
+    onClose: onCloseAddServer
   } = useDisclosure();
-
-  const [formData, setFormData] = useState<Partial<McpServerConfig>>({
-    id: "",
-    name: "",
-    url: "",
-    description: "",
-    enabled: true,
-    connectionStatus: "active",
-    autoApprovedTools: [],
-    disabledTools: []
-  });
-
-  // Reset form on add-server modal open.
-  const [wasAddServerOpen, setWasAddServerOpen] = useState(isAddServerOpen);
-  if (isAddServerOpen !== wasAddServerOpen) {
-    setWasAddServerOpen(isAddServerOpen);
-    if (isAddServerOpen) {
-      setFormData({
-        id: "",
-        name: "",
-        url: "",
-        description: "",
-        enabled: true,
-        connectionStatus: "active",
-        autoApprovedTools: [],
-        disabledTools: []
-      });
-    }
-  }
 
   const handleUpdateServers = (servers: McpServerConfig[]) => {
     servers.forEach((server) => {
       const existing = mcpServers.find((s) => s.id === server.id);
       if (existing) {
         dispatch(updateServer(server));
-      } else {
-        dispatch(addServer(server));
       }
     });
 
@@ -106,19 +74,8 @@ export const McpServerManagementModal = ({
     );
   };
 
-  const handleSaveServer = (server: McpServerConfig) => {
-    dispatch(addServer(server));
-
-    if (server.enabled) {
-      dispatch(
-        updatePreferences({
-          ...mcpPreferences,
-          enabledServers: [...mcpPreferences.enabledServers, server]
-        })
-      );
-    }
-
-    onAddServerOpenChange();
+  const handleAddServer = (server: McpServerConfig, customToken?: string) => {
+    dispatch(addServerWithToken(server, customToken));
   };
 
   return (
@@ -165,82 +122,11 @@ export const McpServerManagementModal = ({
         </ModalContent>
       </Modal>
 
-      {/* Add Server Form Modal */}
-      <Modal
-        hideCloseButton
-        isDismissable={false}
+      <AddServerModal
         isOpen={isAddServerOpen}
-        size="2xl"
-        onOpenChange={onAddServerOpenChange}
-      >
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader>Add New MCP Server</ModalHeader>
-              <ModalBody className="gap-4">
-                <Input
-                  isRequired
-                  label="Server Name"
-                  placeholder="Enter server name (e.g., OSML Geo Agent)"
-                  value={formData.name || ""}
-                  variant="bordered"
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                />
-                <Input
-                  isRequired
-                  label="Server URL"
-                  placeholder="Enter MCP server URL (e.g., http://localhost:8080)"
-                  value={formData.url || ""}
-                  variant="bordered"
-                  onChange={(e) =>
-                    setFormData({ ...formData, url: e.target.value })
-                  }
-                />
-                <Textarea
-                  label="Description"
-                  placeholder="Optional description of the server's capabilities"
-                  value={formData.description || ""}
-                  variant="bordered"
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                />
-                <Switch
-                  isSelected={formData.enabled}
-                  onValueChange={(enabled) =>
-                    setFormData({ ...formData, enabled })
-                  }
-                >
-                  Enable server by default
-                </Switch>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={onClose}>
-                  Cancel
-                </Button>
-                <Button
-                  color="primary"
-                  isDisabled={!formData.name || !formData.url}
-                  onPress={() =>
-                    handleSaveServer({
-                      ...(formData as McpServerConfig),
-                      // Generate the unique id at submit time rather than
-                      // during render, since calling Date.now() in the
-                      // render path is flagged as impure by the React
-                      // Compiler.
-                      id: formData.id || `mcp-server-${Date.now()}`
-                    })
-                  }
-                >
-                  Add Server
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+        onAdd={handleAddServer}
+        onClose={onCloseAddServer}
+      />
     </>
   );
 };

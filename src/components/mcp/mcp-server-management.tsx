@@ -4,18 +4,9 @@
 import { TrashIcon } from "@heroicons/react/24/outline";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
-import { Input, Textarea } from "@heroui/input";
-import {
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  useDisclosure
-} from "@heroui/modal";
 import { Switch } from "@heroui/switch";
 import { Tooltip } from "@heroui/tooltip";
-import React, { useCallback, useState } from "react";
+import React, { useCallback } from "react";
 
 import { McpPreferences, McpServerConfig } from "@/hooks/use-mcp";
 import {
@@ -28,128 +19,8 @@ interface McpServerManagementProps {
   preferences: McpPreferences;
   onUpdateServers: (servers: McpServerConfig[]) => void;
   onUpdatePreferences: (preferences: McpPreferences) => void;
-  onAddServer?: () => void;
+  onAddServer: () => void;
 }
-
-interface McpServerFormProps {
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSave: (server: McpServerConfig) => void;
-}
-
-const McpServerForm: React.FC<McpServerFormProps> = ({
-  isOpen,
-  onOpenChange,
-  onSave
-}) => {
-  const [formData, setFormData] = useState<Partial<McpServerConfig>>({
-    id: "",
-    name: "",
-    url: "",
-    description: "",
-    enabled: true,
-    connectionStatus: "active",
-    autoApprovedTools: [],
-    disabledTools: []
-  });
-
-  // Reset form on modal open.
-  const [wasOpen, setWasOpen] = useState(isOpen);
-  if (isOpen !== wasOpen) {
-    setWasOpen(isOpen);
-    if (isOpen) {
-      setFormData({
-        id: "",
-        name: "",
-        url: "",
-        description: "",
-        enabled: true,
-        connectionStatus: "active",
-        autoApprovedTools: [],
-        disabledTools: []
-      });
-    }
-  }
-
-  const handleSubmit = () => {
-    if (formData.name && formData.url) {
-      // Generate a unique id at submit time rather than during render, since
-      // calling Date.now() during render is flagged as impure by the React
-      // Compiler.
-      const server: McpServerConfig = {
-        ...(formData as McpServerConfig),
-        id: formData.id || `mcp-server-${Date.now()}`
-      };
-      onSave(server);
-      onOpenChange(false);
-    }
-  };
-
-  return (
-    <Modal isOpen={isOpen} size="2xl" onOpenChange={onOpenChange}>
-      <ModalContent>
-        {(onClose) => (
-          <>
-            <ModalHeader className="flex flex-col gap-1">
-              Add New MCP Server
-            </ModalHeader>
-            <ModalBody>
-              <div className="space-y-4">
-                <Input
-                  label="Server Name"
-                  placeholder="Enter server name (e.g., OSML Geo Agent)"
-                  value={formData.name || ""}
-                  variant="bordered"
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                />
-                <Input
-                  label="Server URL"
-                  placeholder="Enter MCP server URL (e.g., http://localhost:8080)"
-                  value={formData.url || ""}
-                  variant="bordered"
-                  onChange={(e) =>
-                    setFormData({ ...formData, url: e.target.value })
-                  }
-                />
-                <Textarea
-                  label="Description"
-                  placeholder="Optional description of the server's capabilities"
-                  value={formData.description || ""}
-                  variant="bordered"
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                />
-                <Switch
-                  isSelected={formData.enabled}
-                  onValueChange={(enabled) =>
-                    setFormData({ ...formData, enabled })
-                  }
-                >
-                  Enable server by default
-                </Switch>
-              </div>
-            </ModalBody>
-            <ModalFooter>
-              <Button color="danger" variant="light" onPress={onClose}>
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                isDisabled={!formData.name || !formData.url}
-                onPress={handleSubmit}
-              >
-                Add Server
-              </Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
-  );
-};
 
 export const McpServerManagement: React.FC<McpServerManagementProps> = ({
   servers,
@@ -158,50 +29,18 @@ export const McpServerManagement: React.FC<McpServerManagementProps> = ({
   onUpdatePreferences,
   onAddServer
 }) => {
-  const { isOpen, onOpen, onOpenChange } = useDisclosure();
   const allTools = selectMcpTools();
   const toolToServerMap = selectMcpToolToServerMap();
 
-  // Helper function to get tools for a specific server
   const getServerTools = useCallback(
     (serverName: string) => {
       if (!allTools || !toolToServerMap) return [];
 
-      return allTools.filter((tool) => {
-        const toolServerName = toolToServerMap.get(tool.name);
-
-        return toolServerName === serverName;
-      });
+      return allTools.filter(
+        (tool) => toolToServerMap.get(tool.name) === serverName
+      );
     },
     [allTools, toolToServerMap]
-  );
-
-  const handleAddServer = useCallback(() => {
-    if (onAddServer) {
-      onAddServer();
-    } else {
-      onOpen();
-    }
-  }, [onAddServer, onOpen]);
-
-  const handleSaveServer = useCallback(
-    (server: McpServerConfig) => {
-      // Add new server
-      const updatedServers = [...servers, server];
-
-      onUpdateServers(updatedServers);
-
-      // Add to preferences if enabled
-      if (server.enabled) {
-        const updatedEnabledServers = [...preferences.enabledServers, server];
-
-        onUpdatePreferences({
-          ...preferences,
-          enabledServers: updatedEnabledServers
-        });
-      }
-    },
-    [servers, preferences, onUpdateServers, onUpdatePreferences]
   );
 
   const handleDeleteServer = useCallback(
@@ -273,7 +112,7 @@ export const McpServerManagement: React.FC<McpServerManagementProps> = ({
           <p className="text-xs text-default-400">
             Add servers using the button below to enable geospatial tools
           </p>
-          <Button className="mt-4" color="primary" onPress={handleAddServer}>
+          <Button className="mt-4" color="primary" onPress={onAddServer}>
             Add MCP Server
           </Button>
         </div>
@@ -418,22 +257,12 @@ export const McpServerManagement: React.FC<McpServerManagementProps> = ({
             );
           })}
 
-          {/* Add Server Button */}
           <div className="mt-4 text-center">
-            <Button color="primary" variant="flat" onPress={handleAddServer}>
+            <Button color="primary" variant="flat" onPress={onAddServer}>
               Add MCP Server
             </Button>
           </div>
         </div>
-      )}
-
-      {/* Server Form Modal - only show if onAddServer not provided */}
-      {!onAddServer && (
-        <McpServerForm
-          isOpen={isOpen}
-          onOpenChange={onOpenChange}
-          onSave={handleSaveServer}
-        />
       )}
     </>
   );

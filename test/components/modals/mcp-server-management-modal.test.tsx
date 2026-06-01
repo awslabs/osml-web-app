@@ -86,7 +86,7 @@ describe("McpServerManagementModal - additional coverage", () => {
       addServer({
         id: "srv-1",
         name: "Test Server",
-        url: "https://test.com/mcp",
+        url: "https://test.amazonaws.com/mcp",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -127,7 +127,7 @@ describe("McpServerManagementModal - server interactions", () => {
       addServer({
         id: "srv-1",
         name: "Server A",
-        url: "https://a.com/mcp",
+        url: "https://a.amazonaws.com/mcp",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -138,7 +138,7 @@ describe("McpServerManagementModal - server interactions", () => {
       addServer({
         id: "srv-2",
         name: "Server B",
-        url: "https://b.com/mcp",
+        url: "https://b.amazonaws.com/mcp",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -161,11 +161,11 @@ describe("McpServerManagementModal - add server flow", () => {
       <McpServerManagementModal isOpen={true} onOpenChange={jest.fn()} />
     );
 
-    // Click the Add MCP Server button
+    // Click the Add MCP Server button (in the management body)
     fireEvent.click(screen.getByRole("button", { name: /add mcp server/i }));
 
-    // The add server form modal should appear
-    expect(screen.getByText("Add New MCP Server")).toBeInTheDocument();
+    // The add server modal should appear with the auth mode radios
+    expect(screen.getByRole("radio", { name: /^None$/ })).toBeInTheDocument();
   });
 
   it("should render server name input in add form", () => {
@@ -195,13 +195,19 @@ describe("McpServerManagementModal - add server flow", () => {
     expect(screen.getByLabelText(/Description/i)).toBeInTheDocument();
   });
 
-  it("should render enable switch in add form", () => {
+  it("should render auth mode radio group in add form", () => {
     renderWithStore(
       <McpServerManagementModal isOpen={true} onOpenChange={jest.fn()} />
     );
     fireEvent.click(screen.getByRole("button", { name: /add mcp server/i }));
 
-    expect(screen.getByText(/Enable server by default/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^None$/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /Use web app session token/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /Custom token/i })
+    ).toBeInTheDocument();
   });
 
   it("should render Cancel and Add Server buttons in add form", () => {

@@ -17,6 +17,8 @@ import {
   updateMcpServerUrls
 } from "@/utils/mcp-auth-interceptor";
 
+export type McpAuthMode = "none" | "session" | "custom";
+
 export interface McpServerConfig {
   id: string;
   name: string;
@@ -26,8 +28,10 @@ export interface McpServerConfig {
   connectionStatus: "active" | "failed" | "connecting";
   autoApprovedTools: string[];
   disabledTools: string[];
-  liveConnectionState?: string; // Current connection state from use-mcp (discovering, connecting, ready, failed, etc.)
-  toolCount?: number; // Number of tools available from this server
+  /** How outbound requests to this server should be authenticated. Treat missing as "none". */
+  authMode?: McpAuthMode;
+  liveConnectionState?: string;
+  toolCount?: number;
 }
 
 export interface McpPreferences {
@@ -148,32 +152,24 @@ export const useMultipleMcp = (
       .join("|");
   }, [enabledServers]);
 
-  // Initial enabled server URLs, captured once at mount. The
-  // `updateMcpServerUrls` effect below handles subsequent changes.
-  const [initialEnabledServerUrls] = useState(() =>
-    enabledServers.map((server) => server.url)
-  );
+  // Captured once at mount; subsequent changes are handled by the
+  // updateMcpServerUrls effect below.
+  const [initialEnabledServers] = useState(() => enabledServers);
 
-  // Initialize fetch interceptor for MCP authentication (stable initialization)
   useEffect(() => {
-    if (initialEnabledServerUrls.length > 0) {
-      initMcpAuthInterceptor(initialEnabledServerUrls);
+    if (initialEnabledServers.length > 0) {
+      initMcpAuthInterceptor(initialEnabledServers);
     }
-
-    // Only cleanup on unmount, not on server changes
     return () => {
       cleanupMcpAuthInterceptor();
     };
-  }, [initialEnabledServerUrls]);
+  }, [initialEnabledServers]);
 
-  // Update interceptor URLs when servers change (without cleanup)
   useEffect(() => {
-    const enabledServerUrls = enabledServers.map((server) => server.url);
-
-    if (enabledServerUrls.length > 0) {
-      updateMcpServerUrls(enabledServerUrls);
+    if (enabledServers.length > 0) {
+      updateMcpServerUrls(enabledServers);
     }
-  }, [serversHash, enabledServers]); // Now serversHash is defined above
+  }, [serversHash, enabledServers]);
 
   // Invoked from McpConnection children when a server's tools list
   // changes. Depends on `mcpPreferences` so preference changes

@@ -99,7 +99,6 @@ export class AuthenticatedApiClient {
       throw enhancedError;
     }
 
-    // Handle response parsing with base64 fallback
     const responseText = await response.text();
 
     // Handle 204 No Content - return empty object
@@ -108,27 +107,10 @@ export class AuthenticatedApiClient {
     }
 
     try {
-      // Try parsing as JSON first (most common case)
       return JSON.parse(responseText) as T;
-    } catch (jsonError) {
-      try {
-        // If JSON parsing fails, try base64 decoding then parsing
-        const decodedText = atob(responseText);
-
-        return JSON.parse(decodedText) as T;
-      } catch (base64Error) {
-        // If both fail, throw error with details
-        const jsonMsg =
-          jsonError instanceof Error ? jsonError.message : "Unknown JSON error";
-        const b64Msg =
-          base64Error instanceof Error
-            ? base64Error.message
-            : "Unknown base64 error";
-
-        throw new Error(
-          `Failed to parse response as JSON (${jsonMsg}) or base64 (${b64Msg})`
-        );
-      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown JSON error";
+      throw new Error(`Failed to parse response as JSON: ${msg}`);
     }
   }
 

@@ -309,7 +309,7 @@ To load results for spatial analysis, pass the stac_urls array to load_stac_as_g
 export const deleteStacItemTool: LocalMcpTool = {
   name: "delete_stac_item",
   description:
-    "Delete a specific STAC item from a collection by its collection ID and item ID. Use this to remove items from the data catalog.",
+    "Initiates deletion of a STAC item from a collection. The user is asked to confirm via an in-chat card; on confirmation the item is permanently removed. The result indicates one of three terminal outcomes: completed (success: true), cancelled by user, or failed. Do not retry on any terminal outcome — they are all final.",
   schema: {
     type: "object",
     properties: {
@@ -324,44 +324,36 @@ export const deleteStacItemTool: LocalMcpTool = {
     },
     required: ["collection_id", "item_id"]
   },
-  handler: async (args: ToolArgs) => {
-    try {
-      const { collection_id, item_id } = args as {
-        collection_id?: string;
-        item_id?: string;
-      };
+  handler: (args: ToolArgs) => {
+    const { collection_id, item_id } = args as {
+      collection_id?: string;
+      item_id?: string;
+    };
 
-      if (!collection_id || !item_id) {
-        return {
-          success: false,
-          error: "Missing required parameters",
-          message: "Both collection_id and item_id are required."
-        };
-      }
-
-      await dataCatalogService.deleteItem(collection_id, item_id);
-
-      return {
-        success: true,
-        message: `Successfully deleted item '${item_id}' from collection '${collection_id}'.`,
-        deleted: { collection_id, item_id }
-      };
-    } catch (error) {
-      const { collection_id, item_id } = args as Record<string, string>;
-
+    if (!collection_id || !item_id) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Delete failed",
-        message: `Unable to delete item '${item_id}' from collection '${collection_id}'.`
+        error: "Missing required parameters",
+        message:
+          "Validation failed: both collection_id and item_id are required."
       };
     }
+
+    return {
+      confirmationRequired: true as const,
+      action: "delete_stac_item" as const,
+      args: { collection_id, item_id },
+      title: "Delete item?",
+      message: `Delete item '${item_id}' from collection '${collection_id}'?`,
+      warning: "This cannot be undone."
+    };
   }
 };
 
 export const deleteStacCollectionTool: LocalMcpTool = {
   name: "delete_stac_collection",
   description:
-    "Delete an entire STAC collection and ALL of its items from the data catalog. WARNING: This is a destructive operation that cannot be undone. Use list_stac_collections first to verify the collection ID.",
+    "Initiates deletion of a STAC collection and all of its items. The user is asked to confirm via an in-chat card; on confirmation the collection and its items are permanently removed. The result indicates one of three terminal outcomes: completed (success: true), cancelled by user, or failed. Do not retry on any terminal outcome — they are all final.",
   schema: {
     type: "object",
     properties: {
@@ -373,33 +365,24 @@ export const deleteStacCollectionTool: LocalMcpTool = {
     },
     required: ["collection_id"]
   },
-  handler: async (args: ToolArgs) => {
-    try {
-      const { collection_id } = args as { collection_id?: string };
+  handler: (args: ToolArgs) => {
+    const { collection_id } = args as { collection_id?: string };
 
-      if (!collection_id) {
-        return {
-          success: false,
-          error: "Missing required parameter",
-          message: "collection_id is required."
-        };
-      }
-
-      await dataCatalogService.deleteCollection(collection_id);
-
-      return {
-        success: true,
-        message: `Successfully deleted collection '${collection_id}' and all its items.`,
-        deleted: { collection_id }
-      };
-    } catch (error) {
-      const { collection_id: cid } = args as Record<string, string>;
-
+    if (!collection_id) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Delete failed",
-        message: `Unable to delete collection '${cid}'. It may not exist or the catalog service may be unavailable.`
+        error: "Missing required parameter",
+        message: "Validation failed: collection_id is required."
       };
     }
+
+    return {
+      confirmationRequired: true as const,
+      action: "delete_stac_collection" as const,
+      args: { collection_id },
+      title: "Delete collection?",
+      message: `Delete collection '${collection_id}' and all of its items?`,
+      warning: "This cannot be undone."
+    };
   }
 };

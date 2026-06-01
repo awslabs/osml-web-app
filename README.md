@@ -322,6 +322,71 @@ Configure MCP servers in the Geospatial Agent interface:
 - **Local Tools**: Built-in tools for data catalog, features, and viewport
 - **Remote Servers**: Connect to external MCP servers (e.g., osml-geo-agents)
 
+#### Default servers via deploy config
+
+Pre-register MCP servers at deploy time by populating
+`dataplaneConfig.MCP_DEFAULT_SERVERS` in `deployment.json`:
+
+```json
+"MCP_DEFAULT_SERVERS": [
+  {
+    "id": "osml-geo-agents",
+    "name": "OSML Geo Agent",
+    "url": "https://geo-agents.example.com/mcp",
+    "description": "OSML geospatial analysis tools",
+    "authMode": "session",
+    "enabled": true
+  }
+]
+```
+
+`authMode` accepts `"none"` or `"session"`. The `"custom"` mode is rejected
+at deploy validation — custom-token servers must be added by users in the
+UI so secrets never live in deploy config.
+
+#### Per-server authentication
+
+When users add a server through the UI, they choose how outbound requests
+authenticate:
+
+- **None** — no Authorization header is attached. Use for public servers.
+- **Use web app session token** — the user's NextAuth access token is
+  forwarded to the server. Selecting this mode shows an explicit warning
+  that the auth token will be sent.
+- **Custom token** — the user pastes a server-specific token. Tokens are
+  stored in browser localStorage under `osml-mcp-custom-tokens`; never sent
+  outside the browser to anywhere except the matching server.
+
+#### Trusted host allowlist
+
+Outbound MCP requests are gated by a host allowlist. The default list,
+compiled into the web app, permits:
+
+- `*.amazonaws.com`
+- `*.aws.dev`
+- `*.amazon.com`
+- `localhost`
+- `127.0.0.1`
+
+Patterns: exact host (`localhost`), subdomain wildcard (`*.example.com`,
+which does not match the bare apex), or `*` to permit any host.
+
+Override the effective list at deploy time via
+`dataplaneConfig.MCP_HOST_ALLOWLIST` (comma-separated). When set, the env
+value **replaces** the default — copy in the defaults you want to keep:
+
+```json
+"MCP_HOST_ALLOWLIST": "*.amazonaws.com,*.aws.dev,*.example-partner.com"
+```
+
+Setting `MCP_HOST_ALLOWLIST` to `*` disables host validation and is intended
+only for trusted-network deployments where the user fully controls which
+servers are reachable.
+
+**HTTPS is always required for non-localhost hosts** regardless of the
+allowlist. Plaintext `http://` and `ws://` are permitted only for
+`localhost` / `127.0.0.1` to support local development.
+
 ### Bedrock Models
 Available models are defined in `cdk/lambda/webAppUtility/app.py` and can be filtered at deploy time via the `bedrockModels.enabledModels` list in `deployment.json`. The app includes automatic quota tracking and rate limiting.
 

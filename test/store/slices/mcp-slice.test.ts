@@ -254,7 +254,7 @@ import {
 const testServer = {
   id: "test-server",
   name: "Test Server",
-  url: "https://test.example.com/mcp",
+  url: "https://test.amazonaws.com/mcp",
   description: "A test server",
   enabled: true,
   connectionStatus: "active" as const,
@@ -303,7 +303,10 @@ describe("mcp-slice - server management", () => {
       const store = createMcpStore();
       store.dispatch(addServer({ ...testServer, connectionStatus: "failed" }));
       store.dispatch(
-        updateServer({ ...testServer, url: "https://new-url.com/mcp" })
+        updateServer({
+          ...testServer,
+          url: "https://new-url.amazonaws.com/mcp"
+        })
       );
       expect(
         selectMcpServers(store.getState()).find((s) => s.id === "test-server")
@@ -571,7 +574,7 @@ describe("mcp-slice - branch coverage", () => {
       addServer({
         id: "srv-1",
         name: "Test",
-        url: "http://test.com",
+        url: "https://test.amazonaws.com",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -596,7 +599,7 @@ describe("mcp-slice - branch coverage", () => {
       addServer({
         id: "srv-1",
         name: "Test",
-        url: "http://test.com",
+        url: "https://test.amazonaws.com",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: ["get_viewport"],
@@ -619,7 +622,7 @@ describe("mcp-slice - branch coverage", () => {
       addServer({
         id: "srv-del",
         name: "To Delete",
-        url: "http://del.com",
+        url: "https://del.amazonaws.com",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -640,7 +643,7 @@ describe("mcp-slice - branch coverage", () => {
       addServer({
         id: "srv-upd",
         name: "Original",
-        url: "http://orig.com",
+        url: "https://orig.amazonaws.com",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -652,7 +655,7 @@ describe("mcp-slice - branch coverage", () => {
       updateServer({
         id: "srv-upd",
         name: "Updated",
-        url: "http://updated.com",
+        url: "https://updated.amazonaws.com",
         enabled: false,
         connectionStatus: "failed",
         autoApprovedTools: [],
@@ -678,7 +681,7 @@ describe("mcp-slice - initializeMcpConnections branches", () => {
       initializeMcpConnections.fulfilled(
         {
           serverCount: 3,
-          servers: [{ id: "s1", name: "S1", url: "http://s1.com" }]
+          servers: [{ id: "s1", name: "S1", url: "https://s1.amazonaws.com" }]
         },
         "r",
         undefined
@@ -711,7 +714,7 @@ describe("mcp-slice - initializeMcpConnections branches", () => {
       addServer({
         id: "active-1",
         name: "Active",
-        url: "http://active.com",
+        url: "https://active.amazonaws.com",
         enabled: true,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -722,7 +725,7 @@ describe("mcp-slice - initializeMcpConnections branches", () => {
       addServer({
         id: "disabled-1",
         name: "Disabled",
-        url: "http://disabled.com",
+        url: "https://disabled.amazonaws.com",
         enabled: false,
         connectionStatus: "active",
         autoApprovedTools: [],
@@ -733,7 +736,7 @@ describe("mcp-slice - initializeMcpConnections branches", () => {
       addServer({
         id: "failed-1",
         name: "Failed",
-        url: "http://failed.com",
+        url: "https://failed.amazonaws.com",
         enabled: true,
         connectionStatus: "failed",
         autoApprovedTools: [],
@@ -749,5 +752,170 @@ describe("mcp-slice - initializeMcpConnections branches", () => {
       // At least the active-1 server should be counted
       expect(payload.serverCount).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe("MCP Slice - server URL validation and token-store thunks", () => {
+  const slice =
+    require("@/store/slices/mcp-slice") as typeof import("@/store/slices/mcp-slice");
+
+  const tokenStore =
+    require("@/services/mcp-token-store") as typeof import("@/services/mcp-token-store");
+
+  const makeServer = (
+    overrides: Partial<import("@/hooks/use-mcp").McpServerConfig> = {}
+  ): import("@/hooks/use-mcp").McpServerConfig => ({
+    id: "test-server",
+    name: "Test",
+    url: "https://test.amazonaws.com/mcp",
+    enabled: true,
+    connectionStatus: "active",
+    autoApprovedTools: [],
+    disabledTools: [],
+    authMode: "none",
+    ...overrides
+  });
+
+  const createStore = () => configureStore({ reducer: { mcp: slice.default } });
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  describe("addServer reducer URL validation", () => {
+    it("rejects a server with an invalid URL and sets error", () => {
+      const store = createStore();
+      const before = store.getState().mcp.servers.length;
+      store.dispatch(slice.addServer(makeServer({ url: "not-a-url" })));
+      const state = store.getState().mcp;
+      expect(state.servers.length).toBe(before);
+      expect(state.error).toBeTruthy();
+    });
+
+    it("rejects a server whose host is not in the allowlist", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServer(makeServer({ url: "https://evil.example.com/mcp" }))
+      );
+      expect(store.getState().mcp.error).toMatch(/allowlist/);
+    });
+
+    it("accepts a server with an allowlisted https URL", () => {
+      const store = createStore();
+      const before = store.getState().mcp.servers.length;
+      store.dispatch(
+        slice.addServer(makeServer({ url: "https://geo.amazonaws.com/mcp" }))
+      );
+      expect(store.getState().mcp.servers.length).toBe(before + 1);
+    });
+  });
+
+  describe("addServerWithToken thunk", () => {
+    it("does not write a token for non-custom modes", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "s1", authMode: "session" }),
+          "should-be-ignored"
+        )
+      );
+      expect(tokenStore.getToken("s1")).toBeNull();
+    });
+
+    it("writes a token for custom mode", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "s2", authMode: "custom" }),
+          "secret-token"
+        )
+      );
+      expect(tokenStore.getToken("s2")).toBe("secret-token");
+    });
+
+    it("does not write the token if the URL is invalid", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "s3", authMode: "custom", url: "junk" }),
+          "secret"
+        )
+      );
+      expect(
+        store.getState().mcp.servers.find((s) => s.id === "s3")
+      ).toBeUndefined();
+      expect(tokenStore.getToken("s3")).toBeNull();
+    });
+  });
+
+  describe("updateServerWithToken thunk", () => {
+    it("clears the token when authMode flips from custom to session", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "u1", authMode: "custom" }),
+          "tok"
+        )
+      );
+      expect(tokenStore.getToken("u1")).toBe("tok");
+      store.dispatch(
+        slice.updateServerWithToken(
+          makeServer({ id: "u1", authMode: "session" })
+        )
+      );
+      expect(tokenStore.getToken("u1")).toBeNull();
+    });
+
+    it("writes a new token when authMode is custom and a token is provided", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(makeServer({ id: "u2", authMode: "session" }))
+      );
+      store.dispatch(
+        slice.updateServerWithToken(
+          makeServer({ id: "u2", authMode: "custom" }),
+          "new-tok"
+        )
+      );
+      expect(tokenStore.getToken("u2")).toBe("new-tok");
+    });
+  });
+
+  describe("removeServerWithToken thunk", () => {
+    it("removes the server and clears its custom token", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "r1", authMode: "custom" }),
+          "tok"
+        )
+      );
+      store.dispatch(slice.removeServerWithToken("r1"));
+      expect(
+        store.getState().mcp.servers.find((s) => s.id === "r1")
+      ).toBeUndefined();
+      expect(tokenStore.getToken("r1")).toBeNull();
+    });
+  });
+
+  describe("resetToDefaultsWithTokens thunk", () => {
+    it("clears all custom tokens", () => {
+      const store = createStore();
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "x", authMode: "custom" }),
+          "tx"
+        )
+      );
+      store.dispatch(
+        slice.addServerWithToken(
+          makeServer({ id: "y", authMode: "custom" }),
+          "ty"
+        )
+      );
+      store.dispatch(slice.resetToDefaultsWithTokens());
+      expect(tokenStore.getToken("x")).toBeNull();
+      expect(tokenStore.getToken("y")).toBeNull();
+    });
   });
 });

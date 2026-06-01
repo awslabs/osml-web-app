@@ -21,6 +21,23 @@ export interface ToolResult {
   status?: "success" | "error";
 }
 
+/**
+ * Returned by destructive tool handlers in lieu of acting. The tool chain
+ * pauses, shows the user an inline confirmation card, and runs the actual
+ * deletion only after explicit confirmation.
+ */
+export interface ConfirmationRequiredPayload {
+  confirmationRequired: true;
+  action:
+    | "delete_stac_collection"
+    | "delete_stac_item"
+    | "delete_image_processing_job";
+  args: Record<string, unknown>;
+  title: string;
+  message: string;
+  warning?: string;
+}
+
 export interface MessageMetadata {
   toolCallId?: string;
   toolName?: string;

@@ -54,7 +54,9 @@ See [`bin/deployment/deployment.json.example`](./bin/deployment/deployment.json.
 - **dataplaneConfig.authConfig** — OIDC provider settings (Keycloak)
 - **dataplaneConfig.webAppConfig** — Domain, build mode, auth client
 - **dataplaneConfig.webAppUtilityConfig** — Bucket access, Bedrock models
-- **Service URLs** — Tile server, STAC catalog, Geo Agents MCP, Model Runner queue/topic ARNs
+- **dataplaneConfig.MCP_DEFAULT_SERVERS** — Pre-registered MCP servers (`{id, name, url, authMode, enabled?}` objects). `authMode` is `"none"` or `"session"`; `"custom"` is rejected — custom-token servers are user-added.
+- **dataplaneConfig.MCP_HOST_ALLOWLIST** — Comma-separated host patterns permitted as MCP server URLs. Empty/unset uses the web app's defaults (`*.amazonaws.com`, `*.aws.dev`, `*.amazon.com`, `localhost`, `127.0.0.1`). Setting it replaces the defaults; `*` permits any host. HTTPS is always required for non-localhost regardless of allowlist.
+- **Service URLs** — Tile server, STAC catalog, Model Runner queue/topic ARNs
 
 > **Note:** `deployment.json` is gitignored. Only the `.example` file is committed.
 

@@ -180,6 +180,42 @@ describe("auth/config", () => {
       );
     });
 
+    it("surfaces an error on the token when the refresh token has been revoked", async () => {
+      // OIDC servers return 400 with body { error: "invalid_grant" } when the
+      // refresh token is revoked, expired, or otherwise invalid. The jwt
+      // callback must populate the token's error field so NextAuth's session
+      // handler picks it up and redirects the user to sign in. The redirect
+      // itself is NextAuth library behavior and out of scope here.
+      const token = {
+        accessToken: "expiring-token",
+        accessTokenExpires: Date.now() - 1000,
+        refreshToken: "revoked-refresh-token"
+      };
+
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: () =>
+          Promise.resolve({
+            error: "invalid_grant",
+            error_description: "Refresh token revoked or expired"
+          })
+      });
+
+      const result = await jwtCallback!({
+        token: token as never,
+        account: null as never,
+        user: undefined as never,
+        trigger: "update"
+      } as never);
+
+      const out = result as Record<string, unknown>;
+      expect(out.error).toMatch(/RefreshAccessTokenError/);
+      // Original token fields are preserved so NextAuth can still surface
+      // them through the session callback for the redirect handler.
+      expect(out.refreshToken).toBe("revoked-refresh-token");
+    });
+
     it("should set error when fetch itself throws", async () => {
       const token = {
         accessToken: "expiring-token",

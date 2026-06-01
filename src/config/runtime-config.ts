@@ -12,11 +12,13 @@
 export interface OsmlRuntimeConfig {
   tileServerUrl: string;
   stacCatalogUrl: string;
-  stacLoaderMcpUrl: string;
   modelRunnerApiUrl: string;
   utilityApiUrl: string;
   mcpServerUrl: string;
-  geoAgentsMcpUrl: string;
+  /** JSON-serialized DefaultMcpServerConfig[]; empty = no pre-registered servers. */
+  mcpDefaultServers: string;
+  /** Comma-separated host patterns; empty = use DEFAULT_MCP_HOST_ALLOWLIST. */
+  mcpHostAllowlist: string;
   detectionBridgeBucket: string;
   kinesisStreamName: string;
   toolCallLimit: string;
@@ -32,11 +34,11 @@ export function readRuntimeConfigFromEnv(): OsmlRuntimeConfig {
   return {
     tileServerUrl: process.env.TILE_SERVER_URL ?? "",
     stacCatalogUrl: process.env.STAC_CATALOG_URL ?? "",
-    stacLoaderMcpUrl: process.env.STAC_LOADER_MCP_URL ?? "",
     modelRunnerApiUrl: process.env.MODEL_RUNNER_API_URL ?? "",
     utilityApiUrl: process.env.UTILITY_API_URL ?? "",
     mcpServerUrl: process.env.MCP_SERVER_URL ?? DEFAULTS.mcpServerUrl,
-    geoAgentsMcpUrl: process.env.GEO_AGENTS_MCP_URL ?? "",
+    mcpDefaultServers: process.env.MCP_DEFAULT_SERVERS ?? "",
+    mcpHostAllowlist: process.env.MCP_HOST_ALLOWLIST ?? "",
     detectionBridgeBucket: process.env.DETECTION_BRIDGE_BUCKET ?? "",
     kinesisStreamName: process.env.KINESIS_STREAM_NAME ?? "",
     toolCallLimit: process.env.TOOL_CALL_LIMIT ?? DEFAULTS.toolCallLimit

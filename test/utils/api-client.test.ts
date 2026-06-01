@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 /**
  * Tests for AuthenticatedApiClient.
- * Covers JWT injection, URL normalization, response parsing (JSON, base64, 204),
+ * Covers JWT injection, URL normalization, response parsing (JSON, 204),
  * error handling (401, non-OK, malformed JSON), and the isApiError type guard.
  */
 
@@ -158,7 +158,11 @@ describe("AuthenticatedApiClient", () => {
       expect(data).toEqual({});
     });
 
-    it("should fall back to base64 decoding when JSON parsing fails", async () => {
+    it("rejects base64-encoded JSON instead of silently decoding it", async () => {
+      // The previous client transparently decoded base64 of valid JSON; that
+      // confused-deputy fallback was removed. A backend that returns
+      // base64-encoded text should now surface as a parse error, not be
+      // misinterpreted as structured data.
       const payload = { decoded: true };
       const base64 = btoa(JSON.stringify(payload));
 
@@ -168,19 +172,35 @@ describe("AuthenticatedApiClient", () => {
         text: () => Promise.resolve(base64)
       });
 
-      const data = await client.get<{ decoded: boolean }>("/b64");
-      expect(data).toEqual(payload);
+      await expect(client.get("/b64")).rejects.toThrow(
+        /Failed to parse response as JSON/
+      );
     });
 
-    it("should throw descriptive error when both JSON and base64 parsing fail", async () => {
+    it("rejects HTML error pages instead of misinterpreting them as data", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         status: 200,
-        text: () => Promise.resolve("<<<not json or base64>>>")
+        text: () =>
+          Promise.resolve(
+            "<!DOCTYPE html><html><body>Server error</body></html>"
+          )
+      });
+
+      await expect(client.get("/html")).rejects.toThrow(
+        /Failed to parse response as JSON/
+      );
+    });
+
+    it("throws a descriptive error when JSON parsing fails", async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("<<<not json>>>")
       });
 
       await expect(client.get("/bad")).rejects.toThrow(
-        /Failed to parse response as JSON.*base64/
+        /Failed to parse response as JSON/
       );
     });
   });

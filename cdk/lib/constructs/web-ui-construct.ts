@@ -69,6 +69,7 @@ import { copyFileSync, existsSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
 import { URL } from "url";
 
+import { DefaultMcpServerConfig } from "../../bin/deployment/load-deployment";
 import { WafConfig } from "../config/app-config";
 import { NODEJS_KEYRING_SHA256 } from "./nodejs-keyring-sha256";
 import { OSMLAccount } from "./types";
@@ -83,10 +84,10 @@ export interface WebAppConfig {
   ec2SecurityGroupId?: string;
   tileServerUrl: string;
   stacCatalogUrl: string;
-  stacLoaderMcpUrl: string;
   webAppUtilityUrl: string;
   modelRunnerApiUrl: string;
-  geoAgentsMcpUrl: string;
+  mcpDefaultServers: DefaultMcpServerConfig[];
+  mcpHostAllowlist?: string;
   authSuccessUrl: string;
   authClientId: string;
   authority: string;
@@ -619,10 +620,10 @@ export class WebUIConstruct extends Construct {
       "      HOSTNAME: '0.0.0.0',",
       `      TILE_SERVER_URL: ${JSON.stringify(this.config.tileServerUrl || "")},`,
       `      STAC_CATALOG_URL: ${JSON.stringify(this.config.stacCatalogUrl || "")},`,
-      `      STAC_LOADER_MCP_URL: ${JSON.stringify(this.config.stacLoaderMcpUrl || "")},`,
       `      UTILITY_API_URL: ${JSON.stringify(this.config.webAppUtilityUrl || "")},`,
       `      MODEL_RUNNER_API_URL: ${JSON.stringify(this.config.modelRunnerApiUrl || "")},`,
-      `      GEO_AGENTS_MCP_URL: ${JSON.stringify(this.config.geoAgentsMcpUrl || "")},`,
+      `      MCP_DEFAULT_SERVERS: ${JSON.stringify(JSON.stringify(this.config.mcpDefaultServers ?? []))},`,
+      `      MCP_HOST_ALLOWLIST: ${JSON.stringify(this.config.mcpHostAllowlist || "")},`,
       `      DETECTION_BRIDGE_BUCKET: ${JSON.stringify(this.config.detectionBridgeBucket || "")},`,
       `      KINESIS_STREAM_NAME: ${JSON.stringify(this.config.kinesisStreamName || "")},`,
       `      OIDC_AUTHORITY: ${JSON.stringify(this.config.authority || "")},`,
@@ -1319,12 +1320,12 @@ exports.handler = async (event, context) => {
         inputConfig.tileServerUrl ?? "https://api.example.com/tiles",
       stacCatalogUrl:
         inputConfig.stacCatalogUrl ?? "https://api.example.com/catalog",
-      stacLoaderMcpUrl: inputConfig.stacLoaderMcpUrl ?? "",
       webAppUtilityUrl:
         inputConfig.webAppUtilityUrl ?? "https://api.example.com/webAppUtility",
       modelRunnerApiUrl:
         inputConfig.modelRunnerApiUrl ?? "https://api.example.com/model-runner",
-      geoAgentsMcpUrl: inputConfig.geoAgentsMcpUrl ?? "",
+      mcpDefaultServers: inputConfig.mcpDefaultServers ?? [],
+      mcpHostAllowlist: inputConfig.mcpHostAllowlist ?? "",
       authSuccessUrl:
         inputConfig.authSuccessUrl ??
         `https://${inputConfig.domainName ?? inputConfig.hostedZone}`,
