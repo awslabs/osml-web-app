@@ -11,7 +11,6 @@ import * as fc from "fast-check";
 
 import {
   deleteImageProcessingJobTool,
-  DeleteJobToolResponse,
   displayDetectionResultsTool,
   DisplayResultsResponse,
   GetJobStatusResponse,
@@ -86,11 +85,7 @@ jest.mock("uuid", () => ({
 }));
 
 // Import mocked modules
-import {
-  deleteJob,
-  fetchAllJobs,
-  fetchJobStatus
-} from "@/services/job-management";
+import { fetchAllJobs, fetchJobStatus } from "@/services/job-management";
 import { modelRunnerService } from "@/services/model-runner-service";
 import { s3Service } from "@/services/s3-service";
 import { sagemakerService } from "@/services/sagemaker-service";
@@ -850,17 +845,19 @@ describe("Model Runner MCP Tools - Property-Based Tests", () => {
   });
 
   /**
-   * Feature: delete-image-processing-job, Property 4: MCP Tool Success Response
-   * **Validates: Requirements 7.3, 7.5**
+   * Feature: delete-image-processing-job, MCP Tool Confirmation Contract
    *
-   * For any valid job ID passed to the delete_image_processing_job MCP tool,
-   * when the deletion succeeds, the response SHALL contain:
-   * - `success: true`
-   * - `job_id` matching the input job ID
-   * - A descriptive success message
+   * The delete_image_processing_job tool no longer performs deletion. It
+   * returns a confirmation payload for the chat UI to render; the actual
+   * deletion runs only when the user clicks Delete on the resulting card.
+   * The handler must:
+   *   - return success=false for missing job_id
+   *   - return success=false when the job does not exist in the store
+   *   - return a confirmationRequired payload when the job exists
+   *   - never call the backend deleteJob service
    */
-  describe("Property 4: MCP Tool Success Response", () => {
-    it("should return success response with correct structure for valid job deletions", async () => {
+  describe("delete_image_processing_job confirmation contract", () => {
+    it("returns a confirmation payload (not a deletion) for any existing job", async () => {
       await fc.assert(
         fc.asyncProperty(
           fc.record({
@@ -871,163 +868,71 @@ describe("Model Runner MCP Tools - Property-Based Tests", () => {
             updated_at: fc.constant("2024-01-01T00:00:00Z")
           }),
           async (job) => {
-            // Create store with the job
             const storeWithJob = createMockStore([job]);
-
-            // Mock successful deletion
-            (deleteJob as jest.Mock).mockResolvedValue({
-              success: true
-            });
 
             const result = (await deleteImageProcessingJobTool.handler(
               { job_id: job.job_id },
               storeWithJob
-            )) as DeleteJobToolResponse;
+            )) as Record<string, unknown>;
 
-            // Property: Successful deletion returns correct response structure
-            expect(result.success).toBe(true);
-            expect(result.job_id).toBe(job.job_id);
-            expect(typeof result.message).toBe("string");
-            expect(result.message.length).toBeGreaterThan(0);
-            expect(result.error).toBeUndefined();
+            expect(result).toMatchObject({
+              confirmationRequired: true,
+              action: "delete_image_processing_job",
+              args: { job_id: job.job_id }
+            });
           }
         ),
         { numRuns: 100 }
       );
     });
 
-    it("should include partial_failures in response when cleanup has warnings", async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.record({
-            job_id: fc.uuid(),
-            job_name: fc.string({ minLength: 1, maxLength: 50 }),
-            status: fc.constantFrom("SUCCESS", "FAILED", "IN_PROGRESS"),
-            output_bucket: fc.string({ minLength: 1, maxLength: 100 }),
-            updated_at: fc.constant("2024-01-01T00:00:00Z")
-          }),
-          fc.constantFrom("viewpoint", "s3", "both"),
-          async (job, failureType) => {
-            // Create store with the job
-            const storeWithJob = createMockStore([job]);
-
-            // Mock successful deletion with partial failures
-            const partialFailures: { viewpoint?: string; s3?: string } = {};
-            if (failureType === "viewpoint" || failureType === "both") {
-              partialFailures.viewpoint = "Failed to delete viewpoint";
-            }
-            if (failureType === "s3" || failureType === "both") {
-              partialFailures.s3 = "Failed to cleanup S3";
-            }
-
-            (deleteJob as jest.Mock).mockResolvedValue({
-              success: true,
-              partialFailures
-            });
-
-            const result = (await deleteImageProcessingJobTool.handler(
-              { job_id: job.job_id },
-              storeWithJob
-            )) as DeleteJobToolResponse;
-
-            // Property: Successful deletion with partial failures includes warnings
-            expect(result.success).toBe(true);
-            expect(result.job_id).toBe(job.job_id);
-            expect(result.partial_failures).toBeDefined();
-            if (failureType === "viewpoint" || failureType === "both") {
-              expect(result.partial_failures!.viewpoint).toBeDefined();
-            }
-            if (failureType === "s3" || failureType === "both") {
-              expect(result.partial_failures!.s3).toBeDefined();
-            }
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
-  });
-
-  /**
-   * Feature: delete-image-processing-job, Property 5: MCP Tool Error Response
-   * **Validates: Requirements 7.4, 7.6**
-   *
-   * For any invalid job ID (non-existent or malformed) passed to the
-   * delete_image_processing_job MCP tool, the response SHALL contain:
-   * - `success: false`
-   * - An error message describing the failure reason
-   */
-  describe("Property 5: MCP Tool Error Response", () => {
-    it("should return error response for non-existent job IDs", async () => {
+    it("returns success=false (not a confirmation) for any non-existent job id", async () => {
       await fc.assert(
         fc.asyncProperty(fc.uuid(), async (nonExistentJobId) => {
-          // Create store with no jobs (empty)
           const emptyStore = createMockStore([]);
 
           const result = (await deleteImageProcessingJobTool.handler(
             { job_id: nonExistentJobId },
             emptyStore
-          )) as DeleteJobToolResponse;
+          )) as {
+            success: boolean;
+            completed?: boolean;
+            message: string;
+            confirmationRequired?: boolean;
+          };
 
-          // Property: Non-existent job returns error response
           expect(result.success).toBe(false);
-          expect(typeof result.error).toBe("string");
-          expect(result.error!.length).toBeGreaterThan(0);
-          expect(result.error!).toContain(nonExistentJobId);
-          expect(typeof result.message).toBe("string");
+          expect(result.confirmationRequired).toBeUndefined();
+          // "Job not found" is a terminal outcome; should be marked completed
+          // so the agent knows not to retry.
+          expect(result.completed).toBe(true);
+          expect(result.message).toContain(nonExistentJobId);
+          expect(result.message).toMatch(/Do not retry/);
         }),
         { numRuns: 100 }
       );
     });
 
-    it("should return error response when backend deletion fails", async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.record({
-            job_id: fc.uuid(),
-            job_name: fc.string({ minLength: 1, maxLength: 50 }),
-            status: fc.constantFrom("SUCCESS", "FAILED", "IN_PROGRESS"),
-            output_bucket: fc.string({ minLength: 1, maxLength: 100 }),
-            updated_at: fc.constant("2024-01-01T00:00:00Z")
-          }),
-          fc.string({ minLength: 1, maxLength: 100 }),
-          async (job, errorMessage) => {
-            // Create store with the job
-            const storeWithJob = createMockStore([job]);
-
-            // Mock failed deletion
-            (deleteJob as jest.Mock).mockResolvedValue({
-              success: false,
-              error: errorMessage
-            });
-
-            const result = (await deleteImageProcessingJobTool.handler(
-              { job_id: job.job_id },
-              storeWithJob
-            )) as DeleteJobToolResponse;
-
-            // Property: Failed deletion returns error response
-            expect(result.success).toBe(false);
-            expect(typeof result.error).toBe("string");
-            expect(result.error!.length).toBeGreaterThan(0);
-            expect(typeof result.message).toBe("string");
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
-
-    it("should return validation error when job_id is missing", async () => {
+    it("returns validation error when job_id is missing", async () => {
       const emptyStore = createMockStore([]);
 
       const result = (await deleteImageProcessingJobTool.handler(
         {},
         emptyStore
-      )) as DeleteJobToolResponse;
+      )) as {
+        success: boolean;
+        error: string;
+        message: string;
+        completed?: boolean;
+        confirmationRequired?: boolean;
+      };
 
-      // Property: Missing job_id returns validation error
       expect(result.success).toBe(false);
+      expect(result.confirmationRequired).toBeUndefined();
       expect(result.error).toContain("job_id");
-      expect(result.message).toBe("Validation failed");
+      expect(result.message).toMatch(/Validation failed/);
+      // Validation errors are retryable; do not mark as completed.
+      expect(result.completed).toBeUndefined();
     });
   });
 });

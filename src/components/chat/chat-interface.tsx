@@ -9,6 +9,7 @@ import { Tooltip } from "@heroui/tooltip";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
+import { DestructiveConfirmationCard } from "@/components/chat/destructive-confirmation-card";
 import { ToolApprovalModal } from "@/components/mcp/tool-approval-modal";
 import { siteConfig } from "@/config/site";
 import { useChatGeneration } from "@/hooks/use-chat-generation";
@@ -132,7 +133,10 @@ export const ChatInterface = ({
     toolExecutions,
     toolApprovalModal,
     handleToolApproval,
-    handleToolRejection
+    handleToolRejection,
+    destructiveConfirmation,
+    handleDestructiveConfirm,
+    handleDestructiveCancel
   } = useToolChain({
     generateResponse
   });
@@ -572,7 +576,8 @@ export const ChatInterface = ({
 
           <div className="space-y-4">
             {session.history.map((message) => {
-              // Skip tool result messages in display (they're handled internally)
+              // Tool result messages aren't shown directly; agent responses
+              // surface the outcome.
               if (message.type === MessageType.TOOL) {
                 return null;
               }
@@ -608,6 +613,22 @@ export const ChatInterface = ({
                     ? `Executing ${callingToolName}...`
                     : "Thinking..."}
                 </span>
+              </div>
+            )}
+
+            {/* Inline destructive-confirmation card */}
+            {destructiveConfirmation && (
+              <div className="flex justify-start mb-4">
+                <div className="max-w-[80%] mr-auto">
+                  <DestructiveConfirmationCard
+                    message={destructiveConfirmation.payload.message}
+                    status="pending"
+                    title={destructiveConfirmation.payload.title}
+                    warning={destructiveConfirmation.payload.warning}
+                    onCancel={handleDestructiveCancel}
+                    onConfirm={handleDestructiveConfirm}
+                  />
+                </div>
               </div>
             )}
 

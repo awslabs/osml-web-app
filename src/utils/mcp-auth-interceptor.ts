@@ -1,111 +1,133 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 /**
- * Fetch interceptor that adds authentication headers to MCP server requests
- * This allows use-mcp library to work with authenticated endpoints transparently
+ * Fetch interceptor that attaches per-server auth to outgoing MCP requests.
+ *
+ * For each registered server we know the auth mode and id. On every fetch we:
+ *   1. Match the request origin against the registered server map.
+ *   2. Re-validate the origin against the host allowlist (defense in depth).
+ *   3. Branch on auth mode: none → no header, session → forward NextAuth
+ *      access token, custom → read the per-server token from mcp-token-store.
  */
+import type { McpAuthMode, McpServerConfig } from "@/hooks/use-mcp";
+import { getToken as getCustomToken } from "@/services/mcp-token-store";
+import { validateMcpServerUrl } from "@/utils/mcp-server-validation";
 
-let originalFetch: typeof fetch;
-let mcpServerUrls: Set<string> = new Set();
+interface RegisteredServer {
+  serverId: string;
+  mode: McpAuthMode;
+}
 
-/**
- * Initialize MCP authentication interceptor
- */
-export function initMcpAuthInterceptor(serverUrls: string[]) {
-  // Store MCP server URLs for targeted interception
-  mcpServerUrls = new Set(serverUrls.map((url) => new URL(url).origin));
+let originalFetch: typeof fetch | undefined;
+let registeredServers: Map<string, RegisteredServer> = new Map();
 
-  // Only patch fetch once
-  if (!originalFetch) {
-    originalFetch = window.fetch;
+function buildMap(servers: McpServerConfig[]): Map<string, RegisteredServer> {
+  const map = new Map<string, RegisteredServer>();
+  for (const s of servers) {
+    if (s.url.startsWith("local://")) continue;
+    try {
+      const origin = new URL(s.url).origin;
+      map.set(origin, {
+        serverId: s.id,
+        mode: s.authMode ?? "none"
+      });
+    } catch {
+      // Skip servers with unparseable URLs.
+    }
+  }
+  return map;
+}
 
-    // Patch global fetch to intercept MCP requests
-    window.fetch = async (
-      input: RequestInfo | URL,
-      init?: RequestInit
-    ): Promise<Response> => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input instanceof Request
-              ? input.url
-              : "";
+export function initMcpAuthInterceptor(servers: McpServerConfig[]) {
+  registeredServers = buildMap(servers);
 
-      // Only intercept absolute URLs that match MCP servers
-      let urlOrigin: string;
-      let isMcpRequest = false;
+  if (originalFetch) return;
+  const native = window.fetch;
+  originalFetch = native;
 
-      try {
-        const urlObj = new URL(url);
+  window.fetch = async (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input instanceof Request
+            ? input.url
+            : "";
 
-        urlOrigin = urlObj.origin;
-        isMcpRequest = mcpServerUrls.has(urlOrigin);
+    let urlObj: URL;
+    try {
+      urlObj = new URL(url);
+    } catch {
+      return native(input, init);
+    }
 
-        // Additional safety check: Don't intercept AWS API Gateway tile server requests
-        if (
-          urlObj.hostname.includes("execute-api") &&
-          urlObj.pathname.includes("/tiles/")
-        ) {
-          isMcpRequest = false;
-        }
-      } catch {
-        // URL parsing failed (likely relative URL) - don't intercept
-        return originalFetch(input, init);
-      }
+    // Tile server requests share the API Gateway origin but use their own
+    // auth scheme; never attach the MCP bearer to them.
+    if (
+      urlObj.hostname.includes("execute-api") &&
+      urlObj.pathname.includes("/tiles/")
+    ) {
+      return native(input, init);
+    }
 
-      if (isMcpRequest) {
-        try {
-          // Try to get session from Next.js API endpoint directly
-          const sessionResponse = await originalFetch("/api/auth/session");
+    const entry = registeredServers.get(urlObj.origin);
+    if (!entry) {
+      return native(input, init);
+    }
 
-          if (sessionResponse.ok) {
-            const session = (await sessionResponse.json()) as {
-              accessToken?: string;
-            };
+    // Defense in depth: even if a server made it into the map, refuse to
+    // attach credentials when its host fails the current allowlist.
+    if (!validateMcpServerUrl(url).ok) {
+      return native(input, init);
+    }
 
-            if (session?.accessToken) {
-              // Preserve original headers and only add Authorization
-              const existingHeaders = new Headers(init?.headers);
+    const token = await resolveToken(entry, native);
+    if (!token) {
+      return native(input, init);
+    }
 
-              existingHeaders.set(
-                "Authorization",
-                `Bearer ${session.accessToken}`
-              );
+    // Overwrite any caller-supplied Authorization header so callers cannot
+    // smuggle a different token onto an MCP request.
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return native(input, { ...init, headers });
+  };
+}
 
-              const authenticatedInit = {
-                ...init,
-                headers: existingHeaders
-              };
+async function resolveToken(
+  entry: RegisteredServer,
+  native: typeof fetch
+): Promise<string | null> {
+  if (entry.mode === "none") return null;
 
-              // Make request with authentication
-              return originalFetch(input, authenticatedInit);
-            }
-          }
-        } catch {
-          // Silently handle auth errors - requests will proceed without auth
-        }
-      }
+  if (entry.mode === "custom") {
+    return getCustomToken(entry.serverId);
+  }
 
-      // For non-MCP requests or if auth failed, use original fetch
-      return originalFetch(input, init);
+  // session: pull from NextAuth's session endpoint.
+  try {
+    const sessionResponse = await native("/api/auth/session");
+    if (!sessionResponse.ok) return null;
+    const session = (await sessionResponse.json()) as {
+      accessToken?: string;
     };
+    return session?.accessToken ?? null;
+  } catch {
+    return null;
   }
 }
 
-/**
- * Update MCP server URLs for the interceptor
- */
-export function updateMcpServerUrls(serverUrls: string[]) {
-  mcpServerUrls = new Set(serverUrls.map((url) => new URL(url).origin));
+export function updateMcpServerUrls(servers: McpServerConfig[]) {
+  registeredServers = buildMap(servers);
 }
 
-/**
- * Clean up fetch interceptor (restore original fetch)
- */
 export function cleanupMcpAuthInterceptor() {
   if (originalFetch) {
     window.fetch = originalFetch;
-    mcpServerUrls.clear();
+    originalFetch = undefined as unknown as typeof fetch;
+    registeredServers.clear();
   }
 }

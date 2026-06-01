@@ -847,119 +847,92 @@ describe("Model Runner MCP Tools - Unit Tests", () => {
 // Additional coverage: deleteImageProcessingJobTool
 // ---------------------------------------------------------------------------
 
-import {
-  deleteImageProcessingJobTool,
-  DeleteJobToolResponse
-} from "@/mcp/local-server/model-runner-tools";
-import { deleteJob } from "@/services/job-management";
+import { deleteImageProcessingJobTool } from "@/mcp/local-server/model-runner-tools";
+
+const buildJobsStore = (
+  jobs: { job_id: string; job_name?: string; output_bucket?: string }[]
+) =>
+  configureStore({
+    reducer: {
+      mapViewer: (
+        state = {
+          map: { viewpointData: {}, geoJSONData: {}, layerStyles: {} },
+          jobsList: {
+            jobs: [],
+            customOrder: [],
+            isLoading: false,
+            isRefreshing: false,
+            error: null
+          }
+        }
+      ) => state,
+      viewport: (state = {}) => state,
+      jobs: (
+        state = {
+          jobsList: {
+            jobs,
+            customOrder: jobs.map((j) => j.job_id),
+            isLoading: false,
+            isRefreshing: false,
+            error: null
+          },
+          selection: { selectedJobs: [], layerStyles: {} }
+        }
+      ) => state,
+      overlay: (state = { layers: {} }) => state,
+      imagery: (state = { viewpointData: {} }) => state
+    }
+  });
 
 describe("deleteImageProcessingJobTool", () => {
-  it("should return validation error when job_id is missing", async () => {
+  it("returns validation error when job_id is missing", async () => {
     const result = (await deleteImageProcessingJobTool.handler(
       {},
       createMockStore()
-    )) as DeleteJobToolResponse;
+    )) as {
+      success: boolean;
+      error: string;
+      message: string;
+      completed?: boolean;
+    };
 
-    expect(result).toEqual({
-      success: false,
-      error: "Missing required parameter: job_id",
-      message: "Validation failed"
-    });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Missing required parameter: job_id");
+    expect(result.message).toMatch(/Validation failed/);
+    // Validation errors are retryable; do not mark as completed.
+    expect(result.completed).toBeUndefined();
   });
 
-  it("should return error when job not found in store", async () => {
-    // Create store with jobs slice that has an empty jobs array
-    const storeWithJobs = configureStore({
-      reducer: {
-        mapViewer: (
-          state = {
-            map: { viewpointData: {}, geoJSONData: {}, layerStyles: {} },
-            jobsList: {
-              jobs: [],
-              customOrder: [],
-              isLoading: false,
-              isRefreshing: false,
-              error: null
-            }
-          }
-        ) => state,
-        viewport: (state = {}) => state,
-        jobs: (
-          state = {
-            jobsList: {
-              jobs: [],
-              customOrder: [],
-              isLoading: false,
-              isRefreshing: false,
-              error: null
-            },
-            selection: { selectedJobs: [], layerStyles: {} }
-          }
-        ) => state,
-        overlay: (state = { layers: {} }) => state,
-        imagery: (state = { viewpointData: {} }) => state
-      }
-    });
-
+  it("returns terminal completed=true result when job not found in store", async () => {
     const result = (await deleteImageProcessingJobTool.handler(
       { job_id: "non-existent" },
-      storeWithJobs
-    )) as DeleteJobToolResponse;
+      buildJobsStore([])
+    )) as {
+      success: boolean;
+      completed: boolean;
+      action: string;
+      message: string;
+    };
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Job not found");
+    expect(result.completed).toBe(true);
+    expect(result.action).toBe("delete_image_processing_job");
+    expect(result.message).toContain("non-existent");
+    expect(result.message).toMatch(/Do not retry/);
   });
 
-  it("should handle service error during deletion", async () => {
-    const storeWithJob = configureStore({
-      reducer: {
-        mapViewer: (
-          state = {
-            map: { viewpointData: {}, geoJSONData: {}, layerStyles: {} },
-            jobsList: {
-              jobs: [],
-              customOrder: [],
-              isLoading: false,
-              isRefreshing: false,
-              error: null
-            }
-          }
-        ) => state,
-        viewport: (state = {}) => state,
-        jobs: (
-          state = {
-            jobsList: {
-              jobs: [
-                {
-                  job_id: "job-1",
-                  job_name: "Test Job",
-                  status: "SUCCESS",
-                  output_bucket: "bucket"
-                }
-              ],
-              customOrder: ["job-1"],
-              isLoading: false,
-              isRefreshing: false,
-              error: null
-            },
-            selection: { selectedJobs: [], layerStyles: {} }
-          }
-        ) => state,
-        overlay: (state = { layers: {} }) => state,
-        imagery: (state = { viewpointData: {} }) => state
-      }
-    });
-
-    (deleteJob as jest.Mock).mockRejectedValue(
-      new Error("Delete service failed")
-    );
-
+  it("returns a confirmation payload when the job exists", async () => {
     const result = (await deleteImageProcessingJobTool.handler(
       { job_id: "job-1" },
-      storeWithJob
-    )) as DeleteJobToolResponse;
+      buildJobsStore([
+        { job_id: "job-1", job_name: "Test Job", output_bucket: "bucket" }
+      ])
+    )) as Record<string, unknown>;
 
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("Delete service failed");
+    expect(result).toMatchObject({
+      confirmationRequired: true,
+      action: "delete_image_processing_job",
+      args: { job_id: "job-1" }
+    });
   });
 });

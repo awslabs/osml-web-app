@@ -5,9 +5,24 @@
  * approval flow, and stop mechanism.
  */
 
-import { act } from "@testing-library/react";
+import { act, waitFor } from "@testing-library/react";
 
+// Mock the data-catalog and job-management services so the sync deletion
+// flow doesn't hit real network code. Must be hoisted before importing
+// useToolChain.
+jest.mock("@/services/data-catalog-service", () => ({
+  dataCatalogService: {
+    deleteCollection: jest.fn().mockResolvedValue(undefined),
+    deleteItem: jest.fn().mockResolvedValue(undefined)
+  }
+}));
+jest.mock("@/services/job-management", () => ({
+  deleteJob: jest.fn().mockResolvedValue({ success: true })
+}));
+
+import { McpServerConfig } from "@/hooks/use-mcp";
 import { useToolChain } from "@/hooks/use-tool-chain";
+import { dataCatalogService } from "@/services/data-catalog-service";
 import { addMessage } from "@/store/slices/chat-session-slice";
 import { mcpGlobals } from "@/store/slices/mcp-slice";
 import { ChatMessage, MessageType } from "@/types/chat";
@@ -437,5 +452,302 @@ describe("useToolChain - tool approval flow", () => {
 
     // Should still call generateResponse with both results (success + error)
     expect(mockGenerateResponse).toHaveBeenCalled();
+  });
+});
+
+describe("useToolChain - destructive confirmation (sync)", () => {
+  const buildBaseMcpState = () => ({
+    servers: [] as McpServerConfig[],
+    preferences: {
+      enabledServers: [] as McpServerConfig[],
+      overrideAllApprovals: true
+    },
+    isLoading: false,
+    error: null,
+    initialized: false,
+    connectionCount: 0,
+    toolApprovalModal: {
+      isOpen: false as const,
+      requestId: null as string | null,
+      tool: null as { name: string; args: Record<string, unknown> } | null
+    },
+    destructiveConfirmation: null,
+    isProcessingToolChain: false
+  });
+
+  beforeEach(() => {
+    mcpGlobals.toolToServerMap = new Map([
+      ["delete_stac_collection", "Local Viewport Server"],
+      ["delete_stac_item", "Local Viewport Server"],
+      ["get_viewport", "Local Viewport Server"]
+    ]);
+    (dataCatalogService.deleteCollection as jest.Mock).mockClear();
+    (dataCatalogService.deleteItem as jest.Mock).mockClear();
+  });
+
+  it("shows the confirmation card when a destructive payload comes back", async () => {
+    const store = createTestStore({ mcp: buildBaseMcpState() });
+    store.dispatch(
+      addMessage(
+        new ChatMessage({
+          type: MessageType.AI,
+          content: "",
+          toolCalls: [
+            {
+              id: "call-conf",
+              name: "delete_stac_collection",
+              args: { collection_id: "eo_2023" },
+              type: "function"
+            }
+          ]
+        })
+      )
+    );
+
+    mockCallTool.mockResolvedValueOnce({
+      confirmationRequired: true,
+      action: "delete_stac_collection",
+      args: { collection_id: "eo_2023" },
+      title: "Delete collection?",
+      message: "Delete collection 'eo_2023' and all of its items?",
+      warning: "This cannot be undone."
+    });
+
+    const { result } = renderHookWithStore(
+      () => useToolChain({ generateResponse: mockGenerateResponse }),
+      { store }
+    );
+
+    // Kick the chain off but don't await — the tool will pause on
+    // confirmation until handleDestructiveConfirm/Cancel is called.
+    let chainPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      chainPromise = result.current.startToolChain();
+    });
+
+    await waitFor(() => {
+      expect(store.getState().mcp.destructiveConfirmation).not.toBeNull();
+    });
+    expect(store.getState().mcp.destructiveConfirmation!.payload.action).toBe(
+      "delete_stac_collection"
+    );
+
+    // Resolve the pending confirmation so the chain unblocks for cleanup.
+    await act(async () => {
+      result.current.handleDestructiveCancel();
+      await chainPromise;
+    });
+  });
+
+  it("returns a terminal cancelled result when the user cancels", async () => {
+    const store = createTestStore({ mcp: buildBaseMcpState() });
+    store.dispatch(
+      addMessage(
+        new ChatMessage({
+          type: MessageType.AI,
+          content: "",
+          toolCalls: [
+            {
+              id: "call-cancel",
+              name: "delete_stac_collection",
+              args: { collection_id: "x" },
+              type: "function"
+            }
+          ]
+        })
+      )
+    );
+
+    mockCallTool.mockResolvedValueOnce({
+      confirmationRequired: true,
+      action: "delete_stac_collection",
+      args: { collection_id: "x" },
+      title: "Delete collection?",
+      message: "Delete collection 'x' and all of its items?"
+    });
+
+    const { result } = renderHookWithStore(
+      () => useToolChain({ generateResponse: mockGenerateResponse }),
+      { store }
+    );
+
+    let chainPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      chainPromise = result.current.startToolChain();
+    });
+
+    await waitFor(() => {
+      expect(store.getState().mcp.destructiveConfirmation).not.toBeNull();
+    });
+
+    await act(async () => {
+      result.current.handleDestructiveCancel();
+      await chainPromise;
+    });
+
+    const history = store.getState().chatSession.history;
+    const toolMsg = history.find(
+      (m: { metadata?: Record<string, unknown> }) =>
+        (m.metadata as { toolName?: string } | undefined)?.toolName ===
+        "delete_stac_collection"
+    ) as { content: string } | undefined;
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.content).toMatch(/User declined the deletion/);
+    expect(toolMsg!.content).toMatch(/"completed": true/);
+    expect(toolMsg!.content).toMatch(/"cancelled": true/);
+    expect(toolMsg!.content).toMatch(/Do not retry/);
+    expect(store.getState().mcp.destructiveConfirmation).toBeNull();
+  });
+
+  it("invokes the delete service and reports success when the user confirms", async () => {
+    const store = createTestStore({ mcp: buildBaseMcpState() });
+    store.dispatch(
+      addMessage(
+        new ChatMessage({
+          type: MessageType.AI,
+          content: "",
+          toolCalls: [
+            {
+              id: "call-confirm",
+              name: "delete_stac_collection",
+              args: { collection_id: "ok" },
+              type: "function"
+            }
+          ]
+        })
+      )
+    );
+
+    mockCallTool.mockResolvedValueOnce({
+      confirmationRequired: true,
+      action: "delete_stac_collection",
+      args: { collection_id: "ok" },
+      title: "Delete collection?",
+      message: "Delete collection 'ok' and all of its items?"
+    });
+
+    const { result } = renderHookWithStore(
+      () => useToolChain({ generateResponse: mockGenerateResponse }),
+      { store }
+    );
+
+    let chainPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      chainPromise = result.current.startToolChain();
+    });
+
+    await waitFor(() => {
+      expect(store.getState().mcp.destructiveConfirmation).not.toBeNull();
+    });
+
+    await act(async () => {
+      result.current.handleDestructiveConfirm();
+      await chainPromise;
+    });
+
+    expect(dataCatalogService.deleteCollection).toHaveBeenCalledWith("ok");
+    const history = store.getState().chatSession.history;
+    const toolMsg = history.find(
+      (m: { metadata?: Record<string, unknown> }) =>
+        (m.metadata as { toolName?: string } | undefined)?.toolName ===
+        "delete_stac_collection"
+    ) as { content: string } | undefined;
+    expect(toolMsg!.content).toMatch(/were deleted after user confirmation/);
+    expect(toolMsg!.content).toMatch(/"completed": true/);
+    expect(toolMsg!.content).toMatch(/do not retry/i);
+  });
+
+  it("non-destructive tool results pass through unchanged", async () => {
+    const store = createTestStore({ mcp: buildBaseMcpState() });
+    store.dispatch(
+      addMessage(
+        new ChatMessage({
+          type: MessageType.AI,
+          content: "",
+          toolCalls: [
+            {
+              id: "call-plain",
+              name: "get_viewport",
+              args: {},
+              type: "function"
+            }
+          ]
+        })
+      )
+    );
+
+    mockCallTool.mockResolvedValueOnce({ longitude: 0, latitude: 0 });
+
+    const { result } = renderHookWithStore(
+      () => useToolChain({ generateResponse: mockGenerateResponse }),
+      { store }
+    );
+
+    await act(async () => {
+      await result.current.startToolChain();
+    });
+
+    expect(store.getState().mcp.destructiveConfirmation).toBeNull();
+    const history = store.getState().chatSession.history;
+    const toolMsg = history.find(
+      (m: { metadata?: Record<string, unknown> }) =>
+        (m.metadata as { toolName?: string } | undefined)?.toolName ===
+        "get_viewport"
+    ) as { content: string } | undefined;
+    expect(toolMsg!.content).toMatch(/longitude/);
+  });
+
+  it("opens the approval modal for a destructive tool that is not auto-approved", async () => {
+    // overrideAllApprovals: false AND tool not in any server's autoApprovedTools.
+    // The chain must surface the standard approval modal — auto-approval and
+    // the destructive-card flow are independent gates.
+    const stateNoAutoApprove = buildBaseMcpState();
+    stateNoAutoApprove.preferences.overrideAllApprovals = false;
+
+    const store = createTestStore({ mcp: stateNoAutoApprove });
+    store.dispatch(
+      addMessage(
+        new ChatMessage({
+          type: MessageType.AI,
+          content: "",
+          toolCalls: [
+            {
+              id: "call-noauto",
+              name: "delete_stac_collection",
+              args: { collection_id: "x" },
+              type: "function"
+            }
+          ]
+        })
+      )
+    );
+
+    const { result } = renderHookWithStore(
+      () => useToolChain({ generateResponse: mockGenerateResponse }),
+      { store }
+    );
+
+    let chainPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      chainPromise = result.current.startToolChain();
+    });
+
+    // Approval modal should open synchronously off the dispatch.
+    await waitFor(() => {
+      expect(store.getState().mcp.toolApprovalModal.isOpen).toBe(true);
+    });
+    expect(store.getState().mcp.toolApprovalModal.tool?.name).toBe(
+      "delete_stac_collection"
+    );
+
+    // Destructive card has not been shown yet — the chain is paused on the
+    // approval modal, not the confirmation card.
+    expect(store.getState().mcp.destructiveConfirmation).toBeNull();
+
+    // Reject the modal so the chain unwinds for cleanup.
+    await act(async () => {
+      result.current.handleToolRejection();
+      await chainPromise;
+    });
   });
 });

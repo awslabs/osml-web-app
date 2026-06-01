@@ -50,8 +50,8 @@ describe("cdk-nag Compliance Checks - WebAppStack", () => {
           deployment.dataplaneConfig!.webAppConfig!.authSuccessUrl,
         tileServerUrl: deployment.dataplaneConfig!.TILE_SERVER_URL,
         stacCatalogUrl: deployment.dataplaneConfig!.STAC_CATALOG_URL,
-        stacLoaderMcpUrl: TEST_FABRICATED.mcpUrl,
-        geoAgentsMcpUrl: deployment.dataplaneConfig!.GEO_AGENTS_MCP_URL,
+        mcpDefaultServers:
+          deployment.dataplaneConfig!.MCP_DEFAULT_SERVERS ?? [],
         webAppUtilityUrl: TEST_FABRICATED.webAppUtilityUrl,
         modelRunnerApiUrl: TEST_FABRICATED.modelRunnerApiUrl,
         authority: deployment.dataplaneConfig!.authConfig!.authority,

@@ -3,23 +3,36 @@ import { useCallback, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { McpServerConfig } from "@/hooks/use-mcp";
+import { dataCatalogService } from "@/services/data-catalog-service";
+import { deleteJob } from "@/services/job-management";
 import {
   addMessages,
   addNotification,
   selectChatSession
 } from "@/store/slices/chat-session-slice";
 import {
+  JobSnapshot,
+  removeJobOptimistically,
+  restoreJob,
+  VectorStyle
+} from "@/store/slices/jobs-slice";
+import {
+  closeDestructiveConfirmation,
   closeToolApprovalModal,
   mcpGlobals,
+  selectDestructiveConfirmation,
   selectIsProcessingToolChain,
   selectMcpPreferences,
   selectToolApprovalModal,
   setProcessingToolChain,
+  showDestructiveConfirmation,
   showToolApprovalModal
 } from "@/store/slices/mcp-slice";
+import { AppDispatch, RootState, store } from "@/store/store";
 import {
   ChatMessage,
   ChatSession,
+  ConfirmationRequiredPayload,
   MessageType,
   ToolExecutionStatus,
   ToolResult
@@ -43,6 +56,7 @@ export const useToolChain = ({
   // Redux selectors
   const mcpPreferences = useSelector(selectMcpPreferences);
   const toolApprovalModalState = useSelector(selectToolApprovalModal);
+  const destructiveConfirmation = useSelector(selectDestructiveConfirmation);
   const isProcessingToolChain = useSelector(selectIsProcessingToolChain);
 
   // Notification service using Redux dispatch
@@ -72,6 +86,12 @@ export const useToolChain = ({
         reject: (error: Error) => void;
       }
     >
+  >(new Map());
+
+  // Pending destructive confirmation promises, keyed by requestId. The card
+  // resolves with "confirm" or "cancel" via handleDestructive*.
+  const pendingConfirmations = useRef<
+    Map<string, { resolve: (choice: "confirm" | "cancel") => void }>
   >(new Map());
 
   const checkAutoApproval = useCallback(
@@ -181,6 +201,154 @@ export const useToolChain = ({
     dispatch(closeToolApprovalModal());
   }, [toolApprovalModalState, dispatch]);
 
+  const extractConfirmationPayload = useCallback(
+    (result: unknown): ConfirmationRequiredPayload | undefined => {
+      const isPayload = (v: unknown): v is ConfirmationRequiredPayload =>
+        typeof v === "object" &&
+        v !== null &&
+        (v as Record<string, unknown>).confirmationRequired === true &&
+        typeof (v as Record<string, unknown>).action === "string" &&
+        typeof (v as Record<string, unknown>).title === "string";
+
+      if (isPayload(result)) return result;
+
+      // External MCP servers wrap results as [{type:"text", text:"<json>"}].
+      if (Array.isArray(result)) {
+        for (const item of result) {
+          if (
+            typeof item === "object" &&
+            item !== null &&
+            "type" in item &&
+            item.type === "text" &&
+            "text" in item &&
+            typeof item.text === "string"
+          ) {
+            try {
+              const parsed: unknown = JSON.parse(item.text);
+              if (isPayload(parsed)) return parsed;
+            } catch {
+              // Not JSON; ignore.
+            }
+          } else if (isPayload(item)) {
+            return item;
+          }
+        }
+      }
+      return undefined;
+    },
+    []
+  );
+
+  const requestDestructiveConfirmation = useCallback(
+    (payload: ConfirmationRequiredPayload): Promise<"confirm" | "cancel"> => {
+      return new Promise((resolve) => {
+        const requestId = `conf-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 11)}`;
+        pendingConfirmations.current.set(requestId, { resolve });
+        dispatch(showDestructiveConfirmation({ requestId, payload }));
+      });
+    },
+    [dispatch]
+  );
+
+  const handleDestructiveConfirm = useCallback(() => {
+    if (!destructiveConfirmation) return;
+    const { requestId } = destructiveConfirmation;
+    const cbs = pendingConfirmations.current.get(requestId);
+    if (cbs) {
+      cbs.resolve("confirm");
+      pendingConfirmations.current.delete(requestId);
+    }
+    dispatch(closeDestructiveConfirmation());
+  }, [destructiveConfirmation, dispatch]);
+
+  const handleDestructiveCancel = useCallback(() => {
+    if (!destructiveConfirmation) return;
+    const { requestId } = destructiveConfirmation;
+    const cbs = pendingConfirmations.current.get(requestId);
+    if (cbs) {
+      cbs.resolve("cancel");
+      pendingConfirmations.current.delete(requestId);
+    }
+    dispatch(closeDestructiveConfirmation());
+  }, [destructiveConfirmation, dispatch]);
+
+  /**
+   * Runs the actual delete service call for a confirmed payload. The result
+   * shape mirrors what each tool's pre-refactor handler returned so the
+   * agent's view of the conversation stays consistent.
+   */
+  const performDeletion = useCallback(
+    async (payload: ConfirmationRequiredPayload): Promise<unknown> => {
+      try {
+        switch (payload.action) {
+          case "delete_stac_collection": {
+            const id = payload.args.collection_id as string;
+            await dataCatalogService.deleteCollection(id);
+            return {
+              success: true,
+              completed: true,
+              action: "delete_stac_collection",
+              deleted: { collection_id: id },
+              message: `Collection '${id}' and all of its items were deleted after user confirmation. This deletion is final; do not retry.`
+            };
+          }
+          case "delete_stac_item": {
+            const cid = payload.args.collection_id as string;
+            const iid = payload.args.item_id as string;
+            await dataCatalogService.deleteItem(cid, iid);
+            return {
+              success: true,
+              completed: true,
+              action: "delete_stac_item",
+              deleted: { collection_id: cid, item_id: iid },
+              message: `Item '${iid}' was deleted from collection '${cid}' after user confirmation. This deletion is final; do not retry.`
+            };
+          }
+          case "delete_image_processing_job": {
+            return await runJobDelete(payload.args.job_id as string);
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        return {
+          success: false,
+          completed: true,
+          action: payload.action,
+          error: msg,
+          message: `Deletion failed after user confirmation: ${msg}. Do not retry automatically; report the failure to the user.`
+        };
+      }
+    },
+    []
+  );
+
+  const awaitConfirmationIfNeeded = useCallback(
+    async (rawResult: unknown): Promise<unknown> => {
+      const payload = extractConfirmationPayload(rawResult);
+      if (!payload) return rawResult;
+
+      const choice = await requestDestructiveConfirmation(payload);
+      if (choice === "cancel") {
+        return {
+          success: false,
+          completed: true,
+          cancelled: true,
+          action: payload.action,
+          message:
+            "User declined the deletion. Do not retry; the user has explicitly chosen not to proceed."
+        };
+      }
+      return await performDeletion(payload);
+    },
+    [
+      extractConfirmationPayload,
+      requestDestructiveConfirmation,
+      performDeletion
+    ]
+  );
+
   const formatToolResult = useCallback((result: unknown): string => {
     if (Array.isArray(result)) {
       return result
@@ -253,7 +421,12 @@ export const useToolChain = ({
 
           setCallingToolName(tool.name);
           try {
-            const result = await executeToolWithApproval(tool);
+            const rawResult = await executeToolWithApproval(tool);
+            // For destructive tools the handler returns a confirmation
+            // request; this blocks on the user's click and substitutes the
+            // actual deletion result. For non-destructive tools, it returns
+            // the original value unchanged.
+            const result = await awaitConfirmationIfNeeded(rawResult);
             const formattedContent = formatToolResult(result);
 
             toolResults.push({
@@ -322,7 +495,7 @@ export const useToolChain = ({
         }
 
         if (toolResults.length > 0 && !stopRequested.current) {
-          // Create tool result messages following LISA's pattern
+          // Create tool result messages following LISA's pattern.
           const toolResultMessages = toolResults.map(
             (tr) =>
               new ChatMessage({
@@ -355,6 +528,7 @@ export const useToolChain = ({
     [
       isProcessingToolChain,
       executeToolWithApproval,
+      awaitConfirmationIfNeeded,
       formatToolResult,
       dispatch,
       generateResponse,
@@ -368,7 +542,14 @@ export const useToolChain = ({
 
   const stopToolChain = useCallback(() => {
     stopRequested.current = true;
-  }, []);
+    // Resolve any in-flight destructive confirmation as cancelled so the
+    // tool chain can proceed past it cleanly.
+    pendingConfirmations.current.forEach((cbs) => cbs.resolve("cancel"));
+    pendingConfirmations.current.clear();
+    if (destructiveConfirmation) {
+      dispatch(closeDestructiveConfirmation());
+    }
+  }, [destructiveConfirmation, dispatch]);
 
   return {
     startToolChain,
@@ -378,6 +559,80 @@ export const useToolChain = ({
     toolExecutions,
     toolApprovalModal: toolApprovalModalState,
     handleToolApproval,
-    handleToolRejection
+    handleToolRejection,
+    destructiveConfirmation,
+    handleDestructiveConfirm,
+    handleDestructiveCancel
   };
 };
+
+/**
+ * Job deletion preserves the model-runner tool's optimistic-with-rollback
+ * semantics: snapshot the job, optimistically remove it from Redux, call the
+ * backend, restore on failure.
+ */
+async function runJobDelete(jobId: string): Promise<unknown> {
+  const state = store.getState() as RootState;
+  const job = state.jobs.jobsList.jobs.find((j) => j.job_id === jobId);
+  if (!job) {
+    return {
+      success: false,
+      completed: true,
+      action: "delete_image_processing_job",
+      message: `Job '${jobId}' was not found at deletion time. It may have been deleted already or never existed. Do not retry.`
+    };
+  }
+
+  const orderIndex = state.jobs.jobsList.customOrder.indexOf(jobId);
+  const wasSelected = state.jobs.selection.selectedJobs.some(
+    (j) => j.job_id === jobId
+  );
+  const layerStyle: VectorStyle | undefined =
+    state.jobs.selection.layerStyles[jobId];
+  const snapshot: JobSnapshot = {
+    job,
+    orderIndex:
+      orderIndex >= 0 ? orderIndex : state.jobs.jobsList.jobs.indexOf(job),
+    wasSelected,
+    layerStyle
+  };
+
+  const dispatch = store.dispatch as AppDispatch;
+  dispatch(removeJobOptimistically({ jobId }));
+  const result = await deleteJob(jobId, job.output_bucket);
+
+  if (!result.success) {
+    dispatch(restoreJob(snapshot));
+    return {
+      success: false,
+      completed: true,
+      action: "delete_image_processing_job",
+      deleted: { job_id: jobId },
+      error: result.error || "Failed to delete job",
+      message: `Job '${jobId}' deletion failed: ${result.error || "unknown error"}. Do not retry automatically; report the failure to the user.`
+    };
+  }
+
+  const label = job.job_name || jobId;
+  const partial = result.partialFailures;
+  if (partial && (partial.viewpoint || partial.s3)) {
+    return {
+      success: true,
+      completed: true,
+      action: "delete_image_processing_job",
+      deleted: { job_id: jobId },
+      partial_failures: {
+        ...(partial.viewpoint ? { viewpoint: partial.viewpoint } : {}),
+        ...(partial.s3 ? { s3: partial.s3 } : {})
+      },
+      message: `Job '${label}' was deleted after user confirmation, with cleanup warnings noted. This deletion is final; do not retry.`
+    };
+  }
+  return {
+    success: true,
+    completed: true,
+    action: "delete_image_processing_job",
+    deleted: { job_id: jobId },
+    message: `Job '${label}' was deleted after user confirmation. This deletion is final; do not retry.`
+  };
+}

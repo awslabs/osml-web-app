@@ -95,6 +95,19 @@ export interface WebAppUtilityConfig {
 }
 
 /**
+ * MCP server pre-registered with the web app at deploy time.
+ * Custom auth tokens cannot be set via deploy config; users add them in the UI.
+ */
+export interface DefaultMcpServerConfig {
+  id: string;
+  name: string;
+  url: string;
+  description?: string;
+  authMode: "none" | "session";
+  enabled?: boolean;
+}
+
+/**
  * STAC Loader configuration for deployment.
  */
 export interface StacLoaderDeploymentConfig {
@@ -146,8 +159,17 @@ export interface DataplaneConfig {
   MODEL_RUNNER_QUEUE_ARN?: string;
   /** Model runner status SNS topic ARN. */
   MODEL_RUNNER_STATUS_TOPIC_ARN?: string;
-  /** Geo agents MCP URL. */
-  GEO_AGENTS_MCP_URL?: string;
+  /**
+   * MCP servers pre-registered in the web app on deploy. Listed in the UI
+   * and editable per-user; tokens for "custom" mode are never set here.
+   */
+  MCP_DEFAULT_SERVERS?: DefaultMcpServerConfig[];
+  /**
+   * Comma-separated host patterns permitted as MCP server URLs.
+   * Empty/unset uses the web app's default list. Set to "*" to permit any
+   * host. HTTPS is always required for non-localhost regardless of allowlist.
+   */
+  MCP_HOST_ALLOWLIST?: string;
   /** Kinesis stream name for Model Runner detection output. */
   KINESIS_STREAM_NAME?: string;
   /** STAC Loader configuration. */
@@ -344,6 +366,114 @@ function validateUrl(url: string, fieldName: string): string {
       fieldName
     );
   }
+}
+
+/**
+ * Enforces the same scheme rules as the runtime validator: https/wss for any
+ * non-loopback host; http/ws only for localhost; local:// permitted as-is.
+ */
+function validateMcpServerScheme(url: string, fieldName: string): void {
+  if (url.startsWith("local://")) return;
+  const parsed = new URL(url);
+  const scheme = parsed.protocol.toLowerCase();
+  const localHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+  const isLocal = localHosts.has(parsed.hostname.toLowerCase());
+
+  if (scheme !== "https:" && scheme !== "wss:" && !isLocal) {
+    throw new DeploymentConfigError(
+      `MCP server URL '${url}' at '${fieldName}' must use https:// or wss:// for non-localhost hosts.`,
+      fieldName
+    );
+  }
+  if (
+    scheme !== "http:" &&
+    scheme !== "https:" &&
+    scheme !== "ws:" &&
+    scheme !== "wss:"
+  ) {
+    throw new DeploymentConfigError(
+      `MCP server URL '${url}' at '${fieldName}' has unsupported scheme '${scheme}'.`,
+      fieldName
+    );
+  }
+}
+
+/**
+ * Validates MCP_DEFAULT_SERVERS. Rejects authMode "custom" (tokens never live
+ * in deploy config), enforces unique ids, and requires non-empty id/name/url.
+ */
+function validateMcpDefaultServers(value: unknown): DefaultMcpServerConfig[] {
+  const fieldName = "dataplaneConfig.MCP_DEFAULT_SERVERS";
+  if (!Array.isArray(value)) {
+    throw new DeploymentConfigError(
+      `Field '${fieldName}' must be an array.`,
+      fieldName
+    );
+  }
+
+  const seenIds = new Set<string>();
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new DeploymentConfigError(
+        `Entry at '${fieldName}[${index}]' must be an object.`,
+        `${fieldName}[${index}]`
+      );
+    }
+    const e = entry as Record<string, unknown>;
+    const path = `${fieldName}[${index}]`;
+
+    const id = validateStringField(e.id, `${path}.id`, true);
+    if (seenIds.has(id)) {
+      throw new DeploymentConfigError(
+        `Duplicate MCP server id '${id}' at '${path}.id'.`,
+        `${path}.id`
+      );
+    }
+    seenIds.add(id);
+
+    const name = validateStringField(e.name, `${path}.name`, true);
+    const url = validateStringField(e.url, `${path}.url`, true);
+    validateUrl(url, `${path}.url`);
+    validateMcpServerScheme(url, `${path}.url`);
+
+    const authModeRaw = validateStringField(
+      e.authMode,
+      `${path}.authMode`,
+      true
+    );
+    if (authModeRaw === "custom") {
+      throw new DeploymentConfigError(
+        `authMode 'custom' is not allowed in deploy config; users add custom-token servers in the UI.`,
+        `${path}.authMode`
+      );
+    }
+    if (authModeRaw !== "none" && authModeRaw !== "session") {
+      throw new DeploymentConfigError(
+        `'${path}.authMode' must be 'none' or 'session', got '${authModeRaw}'.`,
+        `${path}.authMode`
+      );
+    }
+    const authMode: "none" | "session" = authModeRaw;
+
+    const description =
+      e.description !== undefined
+        ? validateStringField(e.description, `${path}.description`, false)
+        : undefined;
+
+    const enabled =
+      e.enabled !== undefined
+        ? validateBooleanField(e.enabled, `${path}.enabled`, false, true)
+        : undefined;
+
+    return {
+      id,
+      name,
+      url,
+      authMode,
+      ...(description ? { description } : {}),
+      ...(enabled !== undefined ? { enabled } : {})
+    };
+  });
 }
 
 /**
@@ -677,15 +807,18 @@ function validateDataplaneConfig(
   if (modelRunnerStatusTopicArn)
     result.MODEL_RUNNER_STATUS_TOPIC_ARN = modelRunnerStatusTopicArn;
 
-  const geoAgentsMcpUrl = validateStringField(
-    dataplane.GEO_AGENTS_MCP_URL,
-    "dataplaneConfig.GEO_AGENTS_MCP_URL",
+  if (dataplane.MCP_DEFAULT_SERVERS !== undefined) {
+    result.MCP_DEFAULT_SERVERS = validateMcpDefaultServers(
+      dataplane.MCP_DEFAULT_SERVERS
+    );
+  }
+
+  const mcpHostAllowlist = validateStringField(
+    dataplane.MCP_HOST_ALLOWLIST,
+    "dataplaneConfig.MCP_HOST_ALLOWLIST",
     false
   );
-  if (geoAgentsMcpUrl) {
-    validateUrl(geoAgentsMcpUrl, "dataplaneConfig.GEO_AGENTS_MCP_URL");
-    result.GEO_AGENTS_MCP_URL = geoAgentsMcpUrl;
-  }
+  if (mcpHostAllowlist) result.MCP_HOST_ALLOWLIST = mcpHostAllowlist;
 
   // Validate STAC Loader config
   if (

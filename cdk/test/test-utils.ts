@@ -89,7 +89,15 @@ export function createTestDeploymentConfig(
         "arn:aws:sns:us-west-2:123456789012:test-mr-status",
       DATA_INTAKE_OUTPUT_TOPIC_ARN:
         "arn:aws:sns:us-west-2:123456789012:test-data-intake",
-      GEO_AGENTS_MCP_URL: "https://test-geo-agents.example.com",
+      MCP_DEFAULT_SERVERS: [
+        {
+          id: "osml-geo-agents",
+          name: "OSML Geo Agent",
+          url: "https://test-geo-agents.example.com",
+          authMode: "session",
+          enabled: true
+        }
+      ],
       KINESIS_STREAM_NAME: "test-mr-stream",
       DOMAIN_HOSTED_ZONE_ID: "Z1234567890ABCDEFGHIJ",
       DOMAIN_HOSTED_ZONE_NAME: "test.example.com",

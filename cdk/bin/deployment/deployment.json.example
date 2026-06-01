@@ -55,7 +55,17 @@
     "DATA_INTAKE_OUTPUT_TOPIC_ARN": "",
     "MODEL_RUNNER_QUEUE_ARN": "",
     "MODEL_RUNNER_STATUS_TOPIC_ARN": "",
-    "GEO_AGENTS_MCP_URL": "",
+    "MCP_DEFAULT_SERVERS": [
+      {
+        "id": "osml-geo-agents",
+        "name": "OSML Geo Agent",
+        "url": "https://geo-agents.example.com/mcp",
+        "description": "OSML geospatial analysis tools",
+        "authMode": "session",
+        "enabled": true
+      }
+    ],
+    "MCP_HOST_ALLOWLIST": "",
     "KINESIS_STREAM_NAME": "",
     "deployIntegrationTests": true
   }

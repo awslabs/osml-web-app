@@ -16,12 +16,12 @@ export const siteConfig = {
   },
   tile_server_base_url: runtime.tileServerUrl,
   stac_catalog_url: runtime.stacCatalogUrl,
-  stac_loader_mcp_url: runtime.stacLoaderMcpUrl,
   model_runner_api_base_url: runtime.modelRunnerApiUrl,
   utility_api_base_url: runtime.utilityApiUrl,
   mcp: {
     default_server_url: runtime.mcpServerUrl,
-    geo_agents_url: runtime.geoAgentsMcpUrl,
+    defaultServersRaw: runtime.mcpDefaultServers,
+    hostAllowlist: runtime.mcpHostAllowlist,
     timeout: 10000,
     reconnect_interval: 5000
   },

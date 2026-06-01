@@ -499,8 +499,7 @@ describe("loadDeploymentConfig", () => {
         },
         dataplaneConfig: {
           TILE_SERVER_URL: "https://tiles.example.com",
-          STAC_CATALOG_URL: "https://stac.example.com",
-          GEO_AGENTS_MCP_URL: "https://mcp.example.com"
+          STAC_CATALOG_URL: "https://stac.example.com"
         }
       };
 
@@ -513,9 +512,6 @@ describe("loadDeploymentConfig", () => {
       );
       expect(result.dataplaneConfig?.STAC_CATALOG_URL).toBe(
         "https://stac.example.com"
-      );
-      expect(result.dataplaneConfig?.GEO_AGENTS_MCP_URL).toBe(
-        "https://mcp.example.com"
       );
     });
 
@@ -536,6 +532,119 @@ describe("loadDeploymentConfig", () => {
       expect(() => {
         loadDeploymentConfig();
       }).toThrow(/Invalid URL format/);
+    });
+
+    test("loads MCP_DEFAULT_SERVERS with authMode", () => {
+      const config = {
+        projectName: "test-project",
+        account: { id: "123456789012", region: "us-west-2" },
+        dataplaneConfig: {
+          MCP_DEFAULT_SERVERS: [
+            {
+              id: "geo",
+              name: "Geo",
+              url: "https://geo.example.com/mcp",
+              authMode: "session",
+              enabled: true
+            },
+            {
+              id: "loader",
+              name: "Loader",
+              url: "https://loader.example.com/mcp",
+              authMode: "none"
+            }
+          ]
+        }
+      };
+      (readFileSync as jest.Mock).mockReturnValue(JSON.stringify(config));
+      const result = loadDeploymentConfig();
+      expect(result.dataplaneConfig?.MCP_DEFAULT_SERVERS).toHaveLength(2);
+      expect(result.dataplaneConfig?.MCP_DEFAULT_SERVERS?.[0].authMode).toBe(
+        "session"
+      );
+    });
+
+    test("rejects MCP_DEFAULT_SERVERS with authMode 'custom'", () => {
+      const config = {
+        projectName: "test-project",
+        account: { id: "123456789012", region: "us-west-2" },
+        dataplaneConfig: {
+          MCP_DEFAULT_SERVERS: [
+            {
+              id: "g",
+              name: "G",
+              url: "https://g.example.com",
+              authMode: "custom"
+            }
+          ]
+        }
+      };
+      (readFileSync as jest.Mock).mockReturnValue(JSON.stringify(config));
+      expect(() => loadDeploymentConfig()).toThrow(/'custom' is not allowed/);
+    });
+
+    test("rejects MCP_DEFAULT_SERVERS with duplicate ids", () => {
+      const config = {
+        projectName: "test-project",
+        account: { id: "123456789012", region: "us-west-2" },
+        dataplaneConfig: {
+          MCP_DEFAULT_SERVERS: [
+            {
+              id: "dup",
+              name: "A",
+              url: "https://a.example.com",
+              authMode: "session"
+            },
+            {
+              id: "dup",
+              name: "B",
+              url: "https://b.example.com",
+              authMode: "none"
+            }
+          ]
+        }
+      };
+      (readFileSync as jest.Mock).mockReturnValue(JSON.stringify(config));
+      expect(() => loadDeploymentConfig()).toThrow(/Duplicate MCP server id/);
+    });
+
+    test("rejects MCP_DEFAULT_SERVERS plaintext http for non-localhost", () => {
+      const config = {
+        projectName: "test-project",
+        account: { id: "123456789012", region: "us-west-2" },
+        dataplaneConfig: {
+          MCP_DEFAULT_SERVERS: [
+            {
+              id: "g",
+              name: "G",
+              url: "http://geo.example.com/mcp",
+              authMode: "session"
+            }
+          ]
+        }
+      };
+      (readFileSync as jest.Mock).mockReturnValue(JSON.stringify(config));
+      expect(() => loadDeploymentConfig()).toThrow(/https:\/\/ or wss:\/\//);
+    });
+
+    test("allows MCP_DEFAULT_SERVERS http://localhost", () => {
+      const config = {
+        projectName: "test-project",
+        account: { id: "123456789012", region: "us-west-2" },
+        dataplaneConfig: {
+          MCP_DEFAULT_SERVERS: [
+            {
+              id: "local",
+              name: "Local",
+              url: "http://localhost:3001/mcp",
+              authMode: "none"
+            }
+          ]
+        }
+      };
+      (readFileSync as jest.Mock).mockReturnValue(JSON.stringify(config));
+      const result = loadDeploymentConfig();
+      expect(result.dataplaneConfig?.MCP_DEFAULT_SERVERS).toHaveLength(1);
     });
 
     test("loads dataplaneConfig with webAppUtilityConfig", () => {

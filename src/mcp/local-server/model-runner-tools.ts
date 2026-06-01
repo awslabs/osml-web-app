@@ -22,7 +22,6 @@ import {
   DEFAULT_TILE_SIZE
 } from "@/config/model-runner-defaults";
 import {
-  deleteJob,
   fetchAllJobs,
   fetchJobStatus,
   isJobSuccessful
@@ -31,13 +30,7 @@ import { submitJob } from "@/services/job-submission";
 import { FeatureDistillation } from "@/services/model-runner-service";
 import { s3Service } from "@/services/s3-service";
 import { sagemakerService } from "@/services/sagemaker-service";
-import {
-  JobSnapshot,
-  removeJobOptimistically,
-  restoreJob,
-  setSelectedJobs,
-  VectorStyle
-} from "@/store/slices/jobs-slice";
+import { setSelectedJobs } from "@/store/slices/jobs-slice";
 import { setViewport } from "@/store/slices/viewport-slice";
 import { AppDispatch, RootState } from "@/store/store";
 
@@ -173,17 +166,6 @@ export interface DisplayResultsResponse {
   };
   message: string;
   error?: string;
-}
-
-export interface DeleteJobToolResponse {
-  success: boolean;
-  job_id?: string;
-  message: string;
-  error?: string;
-  partial_failures?: {
-    viewpoint?: string;
-    s3?: string;
-  };
 }
 
 // ============================================================================
@@ -947,7 +929,7 @@ export const displayDetectionResultsTool: LocalMcpTool = {
 export const deleteImageProcessingJobTool: LocalMcpTool = {
   name: "delete_image_processing_job",
   description:
-    "Delete an image processing job and all associated resources (viewpoint, S3 outputs, backend record). Updates the UI to reflect the deletion.",
+    "Initiates deletion of an image processing job and its associated resources. The user is asked to confirm via an in-chat card; on confirmation the job is permanently removed. The result indicates one of three terminal outcomes: completed (success: true), cancelled by user, or not found. Do not retry on any terminal outcome — they are all final. If the result indicates the job does not exist, do not retry; the job has already been removed or never existed.",
   schema: {
     type: "object",
     properties: {
@@ -959,97 +941,36 @@ export const deleteImageProcessingJobTool: LocalMcpTool = {
     required: ["job_id"],
     additionalProperties: false
   },
-  handler: async (
-    args: ToolArgs,
-    store: Store
-  ): Promise<DeleteJobToolResponse> => {
+  handler: (args: ToolArgs, store: Store) => {
     const { job_id } = args as unknown as DeleteJobArgs;
-    // Validate required parameter
     if (!job_id) {
       return {
         success: false,
         error: "Missing required parameter: job_id",
-        message: "Validation failed"
+        message: "Validation failed: job_id is required."
       };
     }
 
-    try {
-      // Get current state to find the job and create a snapshot for potential rollback
-      const state = store.getState() as RootState;
-      const jobs = state.jobs.jobsList.jobs;
-      const job = jobs.find((j) => j.job_id === job_id);
+    const state = store.getState() as RootState;
+    const job = state.jobs.jobsList.jobs.find((j) => j.job_id === job_id);
 
-      if (!job) {
-        return {
-          success: false,
-          error: `Job not found: ${job_id}`,
-          message: "The specified job does not exist"
-        };
-      }
-
-      // Create snapshot for potential rollback
-      const orderIndex = state.jobs.jobsList.customOrder.indexOf(job_id);
-      const wasSelected = state.jobs.selection.selectedJobs.some(
-        (j) => j.job_id === job_id
-      );
-      const layerStyle: VectorStyle | undefined =
-        state.jobs.selection.layerStyles[job_id];
-
-      const snapshot: JobSnapshot = {
-        job,
-        orderIndex: orderIndex >= 0 ? orderIndex : jobs.indexOf(job),
-        wasSelected,
-        layerStyle
-      };
-
-      // Optimistically remove job from Redux state
-      store.dispatch(removeJobOptimistically({ jobId: job_id }));
-
-      // Call the backend delete service
-      const result = await deleteJob(job_id, job.output_bucket);
-
-      if (!result.success) {
-        // Rollback: restore the job to its previous state
-        store.dispatch(restoreJob(snapshot));
-
-        return {
-          success: false,
-          job_id: job_id,
-          error: result.error || "Failed to delete job",
-          message: "Job deletion failed"
-        };
-      }
-
-      // Build response with partial failure information if any
-      const response: DeleteJobToolResponse = {
-        success: true,
-        job_id: job_id,
-        message: `Job '${job.job_name || job_id}' deleted successfully`
-      };
-
-      if (result.partialFailures) {
-        response.partial_failures = {};
-        if (result.partialFailures.viewpoint) {
-          response.partial_failures.viewpoint =
-            result.partialFailures.viewpoint;
-        }
-        if (result.partialFailures.s3) {
-          response.partial_failures.s3 = result.partialFailures.s3;
-        }
-        if (Object.keys(response.partial_failures).length > 0) {
-          response.message = `Job '${job.job_name || job_id}' deleted with some cleanup warnings`;
-        }
-      }
-
-      return response;
-    } catch (error) {
+    if (!job) {
       return {
         success: false,
-        job_id: job_id,
-        error:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        message: "Failed to delete image processing job"
+        completed: true,
+        action: "delete_image_processing_job",
+        message: `Job '${job_id}' was not found. It may have been deleted already or never existed. Do not retry.`
       };
     }
+
+    const label = job.job_name || job_id;
+    return {
+      confirmationRequired: true as const,
+      action: "delete_image_processing_job" as const,
+      args: { job_id },
+      title: "Delete image processing job?",
+      message: `Delete job '${label}' and its associated viewpoint and outputs?`,
+      warning: "This cannot be undone."
+    };
   }
 };

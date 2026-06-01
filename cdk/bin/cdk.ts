@@ -180,8 +180,10 @@ const dynamicWebAppConfig = {
   // Service URLs from dependencies
   tileServerUrl: deploymentConfig.dataplaneConfig?.TILE_SERVER_URL,
   stacCatalogUrl: deploymentConfig.dataplaneConfig?.STAC_CATALOG_URL,
-  stacLoaderMcpUrl: "", // Will be set after stacLoaderStack is created
-  geoAgentsMcpUrl: deploymentConfig.dataplaneConfig?.GEO_AGENTS_MCP_URL,
+  mcpDefaultServers: [
+    ...(deploymentConfig.dataplaneConfig?.MCP_DEFAULT_SERVERS ?? [])
+  ],
+  mcpHostAllowlist: deploymentConfig.dataplaneConfig?.MCP_HOST_ALLOWLIST,
   // Dynamic URLs from deployed stacks
   webAppUtilityUrl:
     webAppUtilityApiStack.webAppUtility.authorizedRestApi.effectiveUrl,
@@ -218,8 +220,19 @@ const stacLoaderStack = new StacLoaderStack(app, `${projectName}-StacLoader`, {
   wafConfig: wafConfig
 });
 
-// Update dynamic config with STAC loader MCP URL
-dynamicWebAppConfig.stacLoaderMcpUrl = stacLoaderStack.stacLoader.mcpUrl;
+// Inject the stac-loader entry produced by the deployed stack unless an
+// explicit entry with the same id is already present in deployment config.
+const stacLoaderId = "stac-loader";
+if (!dynamicWebAppConfig.mcpDefaultServers.some((s) => s.id === stacLoaderId)) {
+  dynamicWebAppConfig.mcpDefaultServers.push({
+    id: stacLoaderId,
+    name: "STAC Data Loader",
+    url: stacLoaderStack.stacLoader.mcpUrl,
+    description: "Load STAC items from URL references into the workspace",
+    authMode: "session",
+    enabled: true
+  });
+}
 
 // Conditionally deploy STAC Loader Integration Test Stack
 if (deploymentConfig.dataplaneConfig?.deployIntegrationTests) {
