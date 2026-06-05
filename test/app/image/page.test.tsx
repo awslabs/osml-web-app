@@ -6,7 +6,7 @@
  */
 
 // Mock Sidebar to just render children (avoids layout complexity)
-jest.mock("@/components/sidebar", () => ({
+jest.mock("@/components/sidebars/sidebar", () => ({
   Sidebar: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="sidebar">{children}</div>
   )
@@ -38,7 +38,7 @@ jest.mock("@/utils/ol-tile-auth", () => ({
 }));
 
 // Mock image-adjustment-slider to simplify rendering
-jest.mock("@/components/image-adjustment-slider", () => ({
+jest.mock("@/components/image-adjustment/image-adjustment-slider", () => ({
   AdjustmentSlider: ({ label }: { label: string }) => <div>{label}</div>
 }));
 

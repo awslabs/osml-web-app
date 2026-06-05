@@ -9,6 +9,7 @@ import { Tooltip } from "@heroui/tooltip";
 import React, { useCallback } from "react";
 
 import { McpPreferences, McpServerConfig } from "@/hooks/use-mcp";
+import { useAppSelector } from "@/store/hooks";
 import {
   selectMcpTools,
   selectMcpToolToServerMap
@@ -29,15 +30,13 @@ export const McpServerManagement: React.FC<McpServerManagementProps> = ({
   onUpdatePreferences,
   onAddServer
 }) => {
-  const allTools = selectMcpTools();
-  const toolToServerMap = selectMcpToolToServerMap();
+  const allTools = useAppSelector(selectMcpTools);
+  const toolToServerMap = useAppSelector(selectMcpToolToServerMap);
 
   const getServerTools = useCallback(
     (serverName: string) => {
-      if (!allTools || !toolToServerMap) return [];
-
       return allTools.filter(
-        (tool) => toolToServerMap.get(tool.name) === serverName
+        (tool) => toolToServerMap[tool.name] === serverName
       );
     },
     [allTools, toolToServerMap]

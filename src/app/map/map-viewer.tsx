@@ -22,14 +22,13 @@ import DayNight from "ol-ext/source/DayNight";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { StacItem } from "stac-ts";
 
+import { useMapDetectionLayers } from "@/app/map/useMapDetectionLayers";
 import { FeaturePopup } from "@/components/map/feature-popup.tsx";
 import { siteConfig } from "@/config/site.ts";
 import { dataCatalogService } from "@/services/data-catalog-service";
-import { GeoJSONCacheService } from "@/services/geojson-cache-service";
 import { useAppDispatch, useAppSelector } from "@/store/hooks.ts";
 import { selectItemViewpoints } from "@/store/slices/data-catalog-slice.ts";
 import { selectViewpointData } from "@/store/slices/imagery-slice.ts";
-import { DEFAULT_RESULT_STYLE } from "@/store/slices/jobs-slice.ts";
 import {
   FeatureStyle,
   GeoJSONFeature,
@@ -41,19 +40,13 @@ import {
 } from "@/store/slices/settings-slice.ts";
 import { setViewport } from "@/store/slices/viewport-slice.ts";
 import { store } from "@/store/store.ts";
-import { extractClassification } from "@/utils/analytics/extract-classification";
-import { extractConfidence } from "@/utils/analytics/extract-confidence";
-import { CLASSIFICATION_PALETTE } from "@/utils/analytics/types";
-import {
-  computeLoadedDetectionJobIds,
-  diffNewlyLoaded
-} from "@/utils/auto-zoom";
 import {
   webMercatorExtentToWGS84,
   webMercatorToWGS84,
   wgs84ExtentToWebMercator,
   wgs84ToWebMercator
 } from "@/utils/coordinate-transformers-ol.ts";
+import { parseStacItemUrl } from "@/utils/map-rendering";
 import { createAuthenticatedTileLoader } from "@/utils/ol-tile-auth";
 
 export default function MapViewer() {
@@ -73,7 +66,6 @@ export default function MapViewer() {
   const renderedFeatures = useRef<Map<string, GeoJSONFeature>>(new Map());
   const stacTileLayers = useRef<Map<string, TileLayer<XYZ>>>(new Map());
   const dayNightLayer = useRef<VectorLayer<VectorSource> | null>(null);
-  const prevVisibleJobIdsRef = useRef<Set<string>>(new Set());
   const prevVisibleFeatureIdsRef = useRef<Set<string>>(new Set());
 
   const dispatch = useAppDispatch();
@@ -86,28 +78,11 @@ export default function MapViewer() {
   const autoZoom = useAppSelector(selectAutoZoom);
   const mapSettings = useAppSelector(selectMapSettings);
 
-  const { selectedJobs, layerStyles } = useAppSelector(
-    (state) => state.jobs.selection
+  const selectedJobs = useAppSelector(
+    (state) => state.jobs.selection.selectedJobs
   );
   const viewpointData = useAppSelector(selectViewpointData);
-  const confidenceThreshold = useAppSelector(
-    (state) => state.analytics?.confidenceThreshold ?? 0
-  );
-  const colorMode = useAppSelector(
-    (state) => state.analytics?.colorMode ?? "layer"
-  );
   const layerOrder = useAppSelector((state) => state.overlay.layerOrder);
-
-  // Stabilize layerStyles by content hash so the layer-update effect below
-  // doesn't re-run on identity-only changes from Redux.
-  const layerStylesRef = useRef(layerStyles);
-  const layerStylesKey = JSON.stringify(layerStyles);
-  const prevLayerStylesKey = useRef(layerStylesKey);
-  if (prevLayerStylesKey.current !== layerStylesKey) {
-    prevLayerStylesKey.current = layerStylesKey;
-    layerStylesRef.current = layerStyles;
-  }
-  const stableLayerStyles = layerStylesRef.current;
 
   // Memoize visible item viewpoints to prevent re-renders when non-visible items change
   const visibleItemViewpoints = useMemo(() => {
@@ -321,11 +296,21 @@ export default function MapViewer() {
     };
   }, [dispatch]);
 
-  // Handle layer updates when overlay visibility, GeoJSON data, style, etc. changes
+  // Detection vector layers are reconciled (diff-based) by this hook. It is
+  // invoked AFTER the map-init effect above on purpose: the map instance lives
+  // in a ref (no re-render when it's created), so the hook's effect must be
+  // registered after init's so it runs once the map exists on mount. It is also
+  // ordered BEFORE the imagery/order effect below so the shared `detectionLayers`
+  // ref is populated before layer ordering reads it. (Moving this call earlier
+  // re-introduces a bug where detection layers don't render after navigating
+  // into the map from another view.)
+  useMapDetectionLayers(mapInstance, detectionLayers);
+
+  // Handle imagery layer updates and layer ordering when overlay presence,
+  // viewpoint data, or layer order changes. Detection vector layers are
+  // managed by useMapDetectionLayers (above).
   useEffect(() => {
     if (!mapInstance.current) return;
-
-    const cache = GeoJSONCacheService.getInstance();
 
     // Compute the set of job IDs with at least one overlay record present.
     // Each per-layer branch inside the loop below applies its own readiness
@@ -353,25 +338,10 @@ export default function MapViewer() {
       }
     });
 
-    // Remove detection layers for jobs whose overlay record is gone
-    Array.from(detectionLayers.current.keys()).forEach((jobId) => {
-      const detectionPresent = !!overlayLayers[`detection-${jobId}`];
-      if (!detectionPresent) {
-        const layer = detectionLayers.current.get(jobId);
-        if (layer) {
-          mapInstance.current?.removeLayer(layer);
-          detectionLayers.current.delete(jobId);
-        }
-      }
-    });
-
     // Add or update layers for jobs present in the overlay
     visibleJobIds.forEach((jobId) => {
-      const detectionLayerId = `detection-${jobId}`;
       const imageryLayerId = `imagery-${jobId}`;
-      const detectionOverlay = overlayLayers[detectionLayerId];
       const imageryOverlay = overlayLayers[imageryLayerId];
-      const cachedData = cache.get(detectionLayerId);
       const viewpointEntry = viewpointData[jobId];
 
       // Find the job object for metadata (name, etc.)
@@ -419,148 +389,7 @@ export default function MapViewer() {
         imageryLayers.current.set(jobId, imageLayer);
         mapInstance.current?.addLayer(imageLayer);
       }
-
-      // Handle detection GeoJSON layer — read from GeoJSONCacheService.
-      // Presence of `detectionOverlay` in overlay.layers = should render.
-      if (detectionOverlay) {
-        const isLoaded =
-          !detectionOverlay.metadata?.loading &&
-          !detectionOverlay.metadata?.error;
-        if (isLoaded && cachedData) {
-          const layerStyle =
-            stableLayerStyles[job.job_id] || DEFAULT_RESULT_STYLE;
-          // Convert opacity to hex and concatenate it with the color
-          const fillColor =
-            layerStyle.color +
-            Math.round(layerStyle.opacity * 255)
-              .toString(16)
-              .padStart(2, "0");
-
-          // Style function that respects color mode and confidence threshold
-          const classificationColors: Record<string, string> = {};
-          const palette = CLASSIFICATION_PALETTE;
-          let paletteIdx = 0;
-
-          const styleFunction = (feature: FeatureLike) => {
-            const props = feature.getProperties?.() ?? {};
-
-            // Confidence threshold filtering (applies in all modes)
-            if (confidenceThreshold > 0) {
-              const conf = extractConfidence(props);
-              if (conf !== undefined && conf < confidenceThreshold) {
-                return new Style({}); // invisible
-              }
-            }
-
-            // Color based on mode
-            let featureFillColor = fillColor;
-            let featureStrokeColor = layerStyle.color;
-
-            if (colorMode === "confidence") {
-              const conf = extractConfidence(props);
-              if (conf !== undefined) {
-                // Red-to-green gradient
-                const r =
-                  conf < 0.5 ? 255 : Math.round((1.0 - (conf - 0.5) * 2) * 255);
-                const g = conf < 0.5 ? Math.round(conf * 2 * 255) : 255;
-                const hex = `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}00`;
-                featureStrokeColor = hex;
-                featureFillColor =
-                  hex +
-                  Math.round(layerStyle.opacity * 255)
-                    .toString(16)
-                    .padStart(2, "0");
-              } else {
-                featureStrokeColor = "#808080";
-                featureFillColor = "#80808040";
-              }
-            } else if (colorMode === "classification") {
-              const cls = extractClassification(props);
-              if (cls) {
-                if (!classificationColors[cls]) {
-                  classificationColors[cls] =
-                    palette[paletteIdx % palette.length];
-                  paletteIdx++;
-                }
-                featureStrokeColor = classificationColors[cls];
-                featureFillColor =
-                  classificationColors[cls] +
-                  Math.round(layerStyle.opacity * 255)
-                    .toString(16)
-                    .padStart(2, "0");
-              } else {
-                featureStrokeColor = "#808080";
-                featureFillColor = "#80808040";
-              }
-            }
-
-            return new Style({
-              fill: new Fill({ color: featureFillColor }),
-              stroke: new Stroke({ color: featureStrokeColor, width: 2 })
-            });
-          };
-
-          const existingVectorLayer = detectionLayers.current.get(jobId);
-
-          if (existingVectorLayer) {
-            existingVectorLayer.setStyle(styleFunction);
-            existingVectorLayer.changed();
-          } else {
-            // Create new layer
-            const vectorSource = new VectorSource({
-              features: new GeoJSON().readFeatures(cachedData, {
-                featureProjection: "EPSG:3857"
-              })
-            });
-
-            const vectorLayer = new VectorLayer({
-              source: vectorSource,
-              properties: {
-                name: `${job.job_name || job.job_id}_vectors`,
-                type: "vector"
-              },
-              style: styleFunction,
-              zIndex: 2
-            });
-
-            detectionLayers.current.set(jobId, vectorLayer);
-            mapInstance.current?.addLayer(vectorLayer);
-          }
-        }
-      }
     });
-
-    // Auto-zoom should fire when a detection layer just became loaded —
-    // not when it first appears in a loading state. Track the set of jobs
-    // whose detection data is currently loaded; the diff against this is
-    // what "newly ready" means.
-    const loadedDetectionJobIds = computeLoadedDetectionJobIds(overlayLayers);
-    const newlyVisible = diffNewlyLoaded(
-      loadedDetectionJobIds,
-      prevVisibleJobIdsRef.current
-    );
-    prevVisibleJobIdsRef.current = loadedDetectionJobIds;
-
-    if (autoZoom && newlyVisible.size > 0) {
-      // Zoom to the last newly visible job
-      const targetJobId = Array.from(newlyVisible).pop()!;
-      const vectorLayer = detectionLayers.current.get(targetJobId);
-      if (vectorLayer) {
-        const extent = vectorLayer.getSource()?.getExtent();
-        if (
-          extent &&
-          extent.every((val) => isFinite(val)) &&
-          extent[0] !== extent[2] &&
-          extent[1] !== extent[3]
-        ) {
-          mapInstance.current?.getView().fit(extent, {
-            padding: [50, 50, 50, 50],
-            maxZoom: 16,
-            duration: 1000
-          });
-        }
-      }
-    }
 
     // Handle setting layer order
     if (layerOrder.length > 0) {
@@ -597,16 +426,7 @@ export default function MapViewer() {
         layers.push(dayNightLayer.current);
       }
     }
-  }, [
-    selectedJobs,
-    overlayLayers,
-    viewpointData,
-    stableLayerStyles,
-    layerOrder,
-    autoZoom,
-    confidenceThreshold,
-    colorMode
-  ]);
+  }, [selectedJobs, overlayLayers, viewpointData, layerOrder]);
 
   // Listen for agent-triggered viewport changes
   useEffect(() => {
@@ -719,13 +539,10 @@ export default function MapViewer() {
             feature.properties.stacUrl
           ) {
             // Extract collection and item ID from STAC URL
-            const urlParts = feature.properties.stacUrl.split("/");
-            const collectionIndex = urlParts.indexOf("collections");
-            const itemsIndex = urlParts.indexOf("items");
+            const parsed = parseStacItemUrl(feature.properties.stacUrl);
 
-            if (collectionIndex !== -1 && itemsIndex !== -1) {
-              const collectionId = urlParts[collectionIndex + 1];
-              const itemId = urlParts[itemsIndex + 1];
+            if (parsed) {
+              const { collectionId, itemId } = parsed;
 
               try {
                 const stacItem = await getCachedStacItem(collectionId, itemId);

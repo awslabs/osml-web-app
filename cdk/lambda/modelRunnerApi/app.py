@@ -129,8 +129,15 @@ async def create_image_processing_job(job_request: ImageProcessingJobCreate):
 async def list_image_processing_jobs():
     """List all image processing jobs."""
     try:
+        # A single scan() returns at most 1 MB of items; follow
+        # LastEvaluatedKey across pages so large job tables are not
+        # silently truncated.
+        jobs = []
         response = table.scan()
-        jobs = response.get("Items", [])
+        jobs.extend(response.get("Items", []))
+        while "LastEvaluatedKey" in response:
+            response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+            jobs.extend(response.get("Items", []))
 
         # Convert DynamoDB items to ImageProcessingJobStatus objects
         parsed_jobs = [ImageProcessingJobStatus(**job) for job in jobs]

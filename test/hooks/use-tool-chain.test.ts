@@ -24,35 +24,44 @@ import { McpServerConfig } from "@/hooks/use-mcp";
 import { useToolChain } from "@/hooks/use-tool-chain";
 import { dataCatalogService } from "@/services/data-catalog-service";
 import { addMessage } from "@/store/slices/chat-session-slice";
-import { mcpGlobals } from "@/store/slices/mcp-slice";
+import { setMcpRuntimeData } from "@/store/slices/mcp-slice";
 import { ChatMessage, MessageType } from "@/types/chat";
 
 import { createTestStore, renderHookWithStore } from "../test-utils";
 
-// Setup mcpGlobals with a mock callTool
 const mockCallTool = jest.fn();
+const mockGenerateResponse = jest.fn().mockResolvedValue(undefined);
+
+// The local viewport server (present in the mcp slice's default preferences)
+// auto-approves get_viewport, so seeding this map lets the chain call tools
+// directly without the approval modal — matching the prior mcpGlobals setup.
+const TOOL_TO_SERVER_MAP: Record<string, string> = {
+  get_viewport: "Local Viewport Server",
+  delete_stac_collection: "Local Viewport Server",
+  delete_stac_item: "Local Viewport Server"
+};
+
+function renderToolChain(store = createTestStore()) {
+  store.dispatch(
+    setMcpRuntimeData({ tools: [], toolToServerMap: TOOL_TO_SERVER_MAP })
+  );
+  return renderHookWithStore(
+    () =>
+      useToolChain({
+        generateResponse: mockGenerateResponse,
+        callTool: mockCallTool
+      }),
+    { store }
+  );
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mcpGlobals.callTool = mockCallTool;
-  mcpGlobals.toolToServerMap = new Map([
-    ["get_viewport", "Local Viewport Server"]
-  ]);
-  mcpGlobals.tools = [];
 });
-
-afterEach(() => {
-  mcpGlobals.callTool = null;
-  mcpGlobals.toolToServerMap = new Map();
-});
-
-const mockGenerateResponse = jest.fn().mockResolvedValue(undefined);
 
 describe("useToolChain", () => {
   it("should return expected interface", () => {
-    const { result } = renderHookWithStore(() =>
-      useToolChain({ generateResponse: mockGenerateResponse })
-    );
+    const { result } = renderToolChain();
 
     expect(typeof result.current.startToolChain).toBe("function");
     expect(typeof result.current.stopToolChain).toBe("function");
@@ -64,9 +73,7 @@ describe("useToolChain", () => {
   });
 
   it("isProcessingChain should return false initially", () => {
-    const { result } = renderHookWithStore(() =>
-      useToolChain({ generateResponse: mockGenerateResponse })
-    );
+    const { result } = renderToolChain();
     expect(result.current.isProcessingChain()).toBe(false);
   });
 
@@ -96,10 +103,7 @@ describe("useToolChain", () => {
 
     mockCallTool.mockResolvedValue({ longitude: 0, latitude: 0, zoom: 2 });
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -118,10 +122,7 @@ describe("useToolChain", () => {
       addMessage(new ChatMessage({ type: MessageType.HUMAN, content: "Hello" }))
     );
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -152,10 +153,7 @@ describe("useToolChain", () => {
 
     mockCallTool.mockRejectedValue(new Error("Tool failed"));
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -174,9 +172,7 @@ describe("useToolChain", () => {
   });
 
   it("stopToolChain should stop processing", () => {
-    const { result } = renderHookWithStore(() =>
-      useToolChain({ generateResponse: mockGenerateResponse })
-    );
+    const { result } = renderToolChain();
 
     act(() => {
       result.current.stopToolChain();
@@ -187,9 +183,7 @@ describe("useToolChain", () => {
   });
 
   it("handleToolRejection should close modal when no pending approval", () => {
-    const { result, store } = renderHookWithStore(() =>
-      useToolChain({ generateResponse: mockGenerateResponse })
-    );
+    const { result, store } = renderToolChain();
 
     act(() => {
       result.current.handleToolRejection();
@@ -205,20 +199,6 @@ describe("useToolChain", () => {
 // ---------------------------------------------------------------------------
 
 describe("useToolChain - tool approval flow", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mcpGlobals.callTool = mockCallTool;
-    mcpGlobals.toolToServerMap = new Map([
-      ["get_viewport", "Local Viewport Server"]
-    ]);
-    mcpGlobals.tools = [];
-  });
-
-  afterEach(() => {
-    mcpGlobals.callTool = null;
-    mcpGlobals.toolToServerMap = new Map();
-  });
-
   it("should require approval for non-auto-approved tools", async () => {
     const store = createTestStore();
 
@@ -243,10 +223,7 @@ describe("useToolChain - tool approval flow", () => {
     mockCallTool.mockResolvedValue({ longitude: 10, latitude: 20, zoom: 5 });
 
     // Set overrideAllApprovals to true so all tools are auto-approved
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -257,9 +234,7 @@ describe("useToolChain - tool approval flow", () => {
   });
 
   it("handleToolApproval should do nothing when modal not open", () => {
-    const { result } = renderHookWithStore(() =>
-      useToolChain({ generateResponse: mockGenerateResponse })
-    );
+    const { result } = renderToolChain();
 
     act(() => {
       result.current.handleToolApproval();
@@ -294,10 +269,7 @@ describe("useToolChain - tool approval flow", () => {
       new Error("Tool execution cancelled by user")
     );
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -337,10 +309,7 @@ describe("useToolChain - tool approval flow", () => {
       { type: "text", text: "Result line 2" }
     ]);
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -369,10 +338,7 @@ describe("useToolChain - tool approval flow", () => {
 
     mockCallTool.mockResolvedValue("simple string result");
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -401,10 +367,7 @@ describe("useToolChain - tool approval flow", () => {
 
     mockCallTool.mockResolvedValue({ key: "value", nested: { a: 1 } });
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -441,10 +404,7 @@ describe("useToolChain - tool approval flow", () => {
       .mockResolvedValueOnce({ longitude: 0, latitude: 0 })
       .mockRejectedValueOnce(new Error("Second tool failed"));
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -472,15 +432,12 @@ describe("useToolChain - destructive confirmation (sync)", () => {
       tool: null as { name: string; args: Record<string, unknown> } | null
     },
     destructiveConfirmation: null,
-    isProcessingToolChain: false
+    isProcessingToolChain: false,
+    tools: [],
+    toolToServerMap: {} as Record<string, string>
   });
 
   beforeEach(() => {
-    mcpGlobals.toolToServerMap = new Map([
-      ["delete_stac_collection", "Local Viewport Server"],
-      ["delete_stac_item", "Local Viewport Server"],
-      ["get_viewport", "Local Viewport Server"]
-    ]);
     (dataCatalogService.deleteCollection as jest.Mock).mockClear();
     (dataCatalogService.deleteItem as jest.Mock).mockClear();
   });
@@ -513,10 +470,7 @@ describe("useToolChain - destructive confirmation (sync)", () => {
       warning: "This cannot be undone."
     });
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     // Kick the chain off but don't await — the tool will pause on
     // confirmation until handleDestructiveConfirm/Cancel is called.
@@ -566,10 +520,7 @@ describe("useToolChain - destructive confirmation (sync)", () => {
       message: "Delete collection 'x' and all of its items?"
     });
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     let chainPromise: Promise<void> = Promise.resolve();
     act(() => {
@@ -626,10 +577,7 @@ describe("useToolChain - destructive confirmation (sync)", () => {
       message: "Delete collection 'ok' and all of its items?"
     });
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     let chainPromise: Promise<void> = Promise.resolve();
     act(() => {
@@ -678,10 +626,7 @@ describe("useToolChain - destructive confirmation (sync)", () => {
 
     mockCallTool.mockResolvedValueOnce({ longitude: 0, latitude: 0 });
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     await act(async () => {
       await result.current.startToolChain();
@@ -722,10 +667,7 @@ describe("useToolChain - destructive confirmation (sync)", () => {
       )
     );
 
-    const { result } = renderHookWithStore(
-      () => useToolChain({ generateResponse: mockGenerateResponse }),
-      { store }
-    );
+    const { result } = renderToolChain(store);
 
     let chainPromise: Promise<void> = Promise.resolve();
     act(() => {

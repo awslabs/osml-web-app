@@ -868,15 +868,17 @@ export class WebAppUtilityConstruct extends Construct {
         })
       );
     } else {
+      // Unrestricted mode (no allowedBucketArns configured): grant read-only
+      // browsing across buckets. Mutating actions (s3:DeleteObject,
+      // s3:PutBucketCors) are intentionally NOT granted on Resource "*"; they
+      // are only available in restricted mode, scoped to allowedBucketArns.
       lambda.addToRolePolicy(
         new PolicyStatement({
           actions: [
             "s3:ListBucket",
             "s3:ListAllMyBuckets",
             "s3:GetObject",
-            "s3:DeleteObject",
-            "s3:GetBucketCors",
-            "s3:PutBucketCors"
+            "s3:GetBucketCors"
           ],
           resources: ["*"]
         })

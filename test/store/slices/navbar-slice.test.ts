@@ -6,9 +6,6 @@
 import { configureStore } from "@reduxjs/toolkit";
 
 import navbarReducer, {
-  selectCurrentRoute,
-  selectDrawerOpen,
-  selectIsChatPageActive,
   setChatWidgetExpanded,
   setCurrentRoute,
   setDrawerOpen,
@@ -21,31 +18,23 @@ const createStore = () =>
 describe("navbar-slice", () => {
   it("toggleDrawer should toggle drawerOpen", () => {
     const store = createStore();
-    expect(selectDrawerOpen(store.getState())).toBe(false);
+    expect(store.getState().navbar.drawerOpen).toBe(false);
     store.dispatch(toggleDrawer());
-    expect(selectDrawerOpen(store.getState())).toBe(true);
+    expect(store.getState().navbar.drawerOpen).toBe(true);
     store.dispatch(toggleDrawer());
-    expect(selectDrawerOpen(store.getState())).toBe(false);
+    expect(store.getState().navbar.drawerOpen).toBe(false);
   });
 
   it("setDrawerOpen should set explicit value", () => {
     const store = createStore();
     store.dispatch(setDrawerOpen(true));
-    expect(selectDrawerOpen(store.getState())).toBe(true);
+    expect(store.getState().navbar.drawerOpen).toBe(true);
   });
 
   it("setCurrentRoute should update route", () => {
     const store = createStore();
     store.dispatch(setCurrentRoute("/globe"));
-    expect(selectCurrentRoute(store.getState())).toBe("/globe");
-  });
-
-  it("selectIsChatPageActive should detect /geo-agent route", () => {
-    const store = createStore();
-    store.dispatch(setCurrentRoute("/geo-agent"));
-    expect(selectIsChatPageActive(store.getState())).toBe(true);
-    store.dispatch(setCurrentRoute("/map"));
-    expect(selectIsChatPageActive(store.getState())).toBe(false);
+    expect(store.getState().navbar.currentRoute).toBe("/globe");
   });
 
   it("setChatWidgetExpanded should update state", () => {

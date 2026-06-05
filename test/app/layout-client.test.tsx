@@ -9,11 +9,11 @@ import React from "react";
 jest.mock("cesium/Build/Cesium/Widgets/widgets.css", () => ({}));
 
 // Mock heavy child components to avoid deep dependency chains
-jest.mock("@/components/app-initializer", () => ({
+jest.mock("@/components/app/app-initializer", () => ({
   AppInitializer: () => null
 }));
 
-jest.mock("@/components/navbar", () => ({
+jest.mock("@/components/navigation/navbar", () => ({
   Navbar: () => <nav data-testid="navbar">Navbar</nav>
 }));
 

@@ -18,9 +18,10 @@ import { Provider } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
 
 import { Providers } from "@/app/providers";
-import { AppInitializer } from "@/components/app-initializer";
-import { Navbar } from "@/components/navbar";
+import { AppInitializer } from "@/components/app/app-initializer";
+import { Navbar } from "@/components/navigation/navbar";
 import { RouteTracker } from "@/components/navigation/route-tracker";
+import { McpRuntimeProvider } from "@/hooks/use-mcp-runtime";
 import { persistor, store } from "@/store/store";
 
 export function RootLayoutClient({
@@ -37,14 +38,16 @@ export function RootLayoutClient({
           <Providers
             themeProps={{ attribute: "class", defaultTheme: "system" }}
           >
-            <AppInitializer />
-            <RouteTracker />
-            <div className="flex flex-col h-screen">
-              <Navbar />
-              <main className="flex-grow w-full h-[calc(100vh-var(--navbar-height))]">
-                {children}
-              </main>
-            </div>
+            <McpRuntimeProvider>
+              <AppInitializer />
+              <RouteTracker />
+              <div className="flex flex-col h-screen">
+                <Navbar />
+                <main className="flex-grow w-full h-[calc(100vh-var(--navbar-height))]">
+                  {children}
+                </main>
+              </div>
+            </McpRuntimeProvider>
           </Providers>
         </PersistGate>
       </Provider>

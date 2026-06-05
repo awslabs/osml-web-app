@@ -23,7 +23,6 @@ import bedrockModelReducer from "./slices/bedrock-model-slice.ts";
 import bedrockQuotaReducer from "./slices/bedrock-quota-slice.ts";
 import bedrockThrottleReducer from "./slices/bedrock-throttle-slice.ts";
 import chatSessionReducer from "./slices/chat-session-slice.ts";
-import chatWidgetReducer from "./slices/chat-widget-slice.ts";
 import imageryReducer from "./slices/imagery-slice.ts";
 import jobsReducer, { fetchDataMiddleware } from "./slices/jobs-slice.ts";
 import mcpReducer from "./slices/mcp-slice.ts";
@@ -54,7 +53,6 @@ const rootReducer = combineReducers({
   bedrockModel: bedrockModelReducer,
   bedrockThrottle: bedrockThrottleReducer,
   bedrockQuota: bedrockQuotaReducer,
-  chatWidget: chatWidgetReducer,
   chatSession: chatSessionReducer,
   viewport: viewportReducer,
   overlay: overlayReducer,

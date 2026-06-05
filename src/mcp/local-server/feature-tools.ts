@@ -8,6 +8,7 @@ import {
   GeoJSONFeature,
   removeFeature
 } from "@/store/slices/overlay-slice";
+import type { RootState } from "@/store/store";
 
 import { LocalMcpTool, ToolArgs } from "./types";
 
@@ -40,12 +41,6 @@ interface DrawFeatureArgs {
 
 interface DeleteLayerArgs {
   layerId: string;
-}
-
-interface RootState {
-  overlay: {
-    inlineFeatures: Record<string, GeoJSONFeature[]>;
-  };
 }
 
 // Helper function to parse WKT string to GeoJSON geometry

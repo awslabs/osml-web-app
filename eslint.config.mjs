@@ -152,6 +152,7 @@ export default [
       "import/default": "off",
       "import/order": "off",
       "import/no-namespace": "error",
+      "import/no-cycle": ["error", { ignoreExternal: true }],
       // Simple import sort
       "simple-import-sort/imports": "error",
       // TypeScript rules

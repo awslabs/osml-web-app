@@ -1,20 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import {
   BillboardGraphics,
-  BoundingSphere,
   Cartesian2,
   Cartesian3,
-  Cartographic,
-  Color,
-  ColorMaterialProperty,
   ConstantProperty,
   defined,
   Entity,
   GeoJsonDataSource,
-  HeightReference,
   HorizontalOrigin,
   ImageryProvider,
-  Math as CesiumMath,
   ScreenSpaceEventType,
   TerrainProvider,
   VerticalOrigin,
@@ -23,35 +17,19 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Viewer } from "resium";
 
+import { applyEntityStyling } from "@/app/globe/cesium-entity-styling";
+import { useDetectionLayers } from "@/app/globe/useDetectionLayers";
 import { useImageryTileEffect } from "@/app/globe/useImageryTileEffect";
 import {
   GlobeFeaturePopup,
   type GlobeFeaturePopupData
 } from "@/components/globe/globe-feature-popup";
 import { dataCatalogService } from "@/services/data-catalog-service";
-import { GeoJSONCacheService } from "@/services/geojson-cache-service";
 import { useAppDispatch, useAppSelector } from "@/store/hooks.ts";
-import {
-  DEFAULT_RESULT_STYLE,
-  selectLayerStyles
-} from "@/store/slices/jobs-slice.ts";
-import type {
-  FeatureStyle,
-  OverlayLayer
-} from "@/store/slices/overlay-slice.ts";
+import type { FeatureStyle } from "@/store/slices/overlay-slice.ts";
 import { selectFeature } from "@/store/slices/overlay-slice.ts";
-import {
-  selectAutoZoom,
-  selectGlobeSettings
-} from "@/store/slices/settings-slice.ts";
+import { selectGlobeSettings } from "@/store/slices/settings-slice.ts";
 import { setViewport } from "@/store/slices/viewport-slice.ts";
-import { extractClassification } from "@/utils/analytics/extract-classification";
-import { extractConfidence } from "@/utils/analytics/extract-confidence";
-import { CLASSIFICATION_PALETTE } from "@/utils/analytics/types";
-import {
-  computeLoadedDetectionJobIds,
-  diffNewlyLoaded
-} from "@/utils/auto-zoom";
 import {
   calculateZoomFromExtent,
   cartesian3ToWGS84,
@@ -66,6 +44,7 @@ import {
   generateTerrainProviders,
   generateTerrainProviderViewModels
 } from "@/utils/globe-providers.ts";
+import { parseStacItemUrl } from "@/utils/map-rendering";
 
 interface ViewerConfig {
   imageryProvider: ImageryProvider;
@@ -151,7 +130,6 @@ export default function Cesium() {
   const [popupData, setPopupData] = useState<GlobeFeaturePopupData | null>(
     null
   );
-  const prevVisibleJobIdsRef = useRef<Set<string>>(new Set());
 
   const dispatch = useAppDispatch();
   const viewport = useAppSelector((state) => state.viewport);
@@ -159,48 +137,13 @@ export default function Cesium() {
     (state) => state.overlay.inlineFeatures["agent-features"]
   );
   const features = inlineAgentFeatures ?? emptyFeatures;
-  const overlayLayers = useAppSelector((state) => state.overlay.layers);
-  const layerOrder = useAppSelector((state) => state.overlay.layerOrder);
-  const layerStyles = useAppSelector(selectLayerStyles);
-  const autoZoom = useAppSelector(selectAutoZoom);
   const globeSettings = useAppSelector(selectGlobeSettings);
-  const confidenceThreshold = useAppSelector(
-    (state) => state.analytics?.confidenceThreshold ?? 0
-  );
-  const colorMode = useAppSelector(
-    (state) => state.analytics?.colorMode ?? "layer"
-  );
 
-  // Stabilize references to prevent infinite re-render loops
-  const overlayLayersRef = useRef(overlayLayers);
-  const overlayLayersKey = JSON.stringify(overlayLayers);
-  const prevOverlayLayersKey = useRef(overlayLayersKey);
-  if (prevOverlayLayersKey.current !== overlayLayersKey) {
-    prevOverlayLayersKey.current = overlayLayersKey;
-    overlayLayersRef.current = overlayLayers;
-  }
-  const stableOverlayLayers = overlayLayersRef.current;
-
-  const layerOrderRef = useRef(layerOrder);
-  const layerOrderKey = JSON.stringify(layerOrder);
-  const prevLayerOrderKey = useRef(layerOrderKey);
-  if (prevLayerOrderKey.current !== layerOrderKey) {
-    prevLayerOrderKey.current = layerOrderKey;
-    layerOrderRef.current = layerOrder;
-  }
-  const stableLayerOrder = layerOrderRef.current;
-
-  const layerStylesRef = useRef(layerStyles);
-  const layerStylesKey = JSON.stringify(layerStyles);
-  const prevLayerStylesKey = useRef(layerStylesKey);
-  if (prevLayerStylesKey.current !== layerStylesKey) {
-    prevLayerStylesKey.current = layerStylesKey;
-    layerStylesRef.current = layerStyles;
-  }
-  const stableLayerStyles = layerStylesRef.current;
-
-  // Render imagery tiles for selected jobs on the globe
+  // Render imagery tiles and detection layers for selected jobs on the globe.
+  // Detection layers are reconciled (diff-based) so GeoJSON is not re-parsed
+  // on style/color-mode/threshold changes.
   useImageryTileEffect(viewerRef.current);
+  useDetectionLayers(viewerRef.current, viewerReady);
 
   // Apply globe rendering settings from Redux
   useEffect(() => {
@@ -348,359 +291,24 @@ export default function Cesium() {
     });
   }, [viewport, viewerReady, initialized]);
 
-  // Handle overlay layer rendering on globe (agent features + detection layers)
+  // Render agent-drawn features (direct GeoJSON + STAC URLs) and wire the
+  // click handler. Detection/imagery layers are owned by their own hooks, so
+  // this effect only manages the agent/STAC data sources it creates.
   useEffect(() => {
     if (!viewerRef.current || !viewerReady) return;
 
     const viewer = viewerRef.current;
-    const cache = GeoJSONCacheService.getInstance();
 
-    // Remove all existing data sources (clean slate approach)
-    viewer.dataSources.removeAll();
-
-    // Helper function for styling entities
-    const applyEntityStyling = (
-      entity: Entity,
-      style: Partial<FeatureStyle>
-    ) => {
-      // Convert hex colors to Cesium Color
-      const hexToColor = (hex: string, opacity: number = 1) => {
-        const r = parseInt(hex.slice(1, 3), 16) / 255;
-        const g = parseInt(hex.slice(3, 5), 16) / 255;
-        const b = parseInt(hex.slice(5, 7), 16) / 255;
-
-        return Color.fromAlpha(
-          Color.fromBytes(r * 255, g * 255, b * 255),
-          opacity
-        );
-      };
-
-      const fillColor = style.fillColor || "#3388ff";
-      const strokeColor = style.color || "#3388ff";
-      const fillOpacity = style.fillOpacity || 0.2;
-      const strokeOpacity = style.opacity || 0.8;
-      const strokeWidth = style.weight || 3;
-
-      // Apply styling based on geometry type
-      if (entity.polygon) {
-        entity.polygon.material = new ColorMaterialProperty(
-          hexToColor(fillColor, fillOpacity)
-        );
-        entity.polygon.outline = new ConstantProperty(true);
-        entity.polygon.outlineColor = new ConstantProperty(
-          hexToColor(strokeColor, strokeOpacity)
-        );
-        entity.polygon.outlineWidth = new ConstantProperty(strokeWidth);
-        entity.polygon.height = new ConstantProperty(0);
-        entity.polygon.extrudedHeight = new ConstantProperty(0);
-      }
-
-      if (entity.polyline) {
-        entity.polyline.material = new ColorMaterialProperty(
-          hexToColor(strokeColor, strokeOpacity)
-        );
-        entity.polyline.width = new ConstantProperty(strokeWidth);
-        entity.polyline.clampToGround = new ConstantProperty(true);
-      }
-
-      if (entity.point) {
-        const pointRadius = style.radius || 8;
-        const pixelSize = Math.max(8, pointRadius * 1.5);
-
-        if (style.icon) {
-          entity.billboard = new BillboardGraphics({
-            image: new ConstantProperty(style.icon),
-            scale: new ConstantProperty(style.iconScale || 1),
-            color: new ConstantProperty(hexToColor(strokeColor, strokeOpacity)),
-            heightReference: new ConstantProperty(
-              HeightReference.CLAMP_TO_GROUND
-            ),
-            disableDepthTestDistance: new ConstantProperty(
-              Number.POSITIVE_INFINITY
-            )
-          });
-          entity.point = undefined;
-        } else {
-          entity.point.color = new ConstantProperty(
-            hexToColor(fillColor, fillOpacity)
-          );
-          entity.point.outlineColor = new ConstantProperty(
-            hexToColor(strokeColor, strokeOpacity)
-          );
-          entity.point.outlineWidth = new ConstantProperty(
-            Math.max(1, strokeWidth)
-          );
-          entity.point.pixelSize = new ConstantProperty(pixelSize);
-          entity.point.heightReference = new ConstantProperty(
-            HeightReference.CLAMP_TO_GROUND
-          );
-          entity.point.scaleByDistance = new ConstantProperty({
-            near: 1000,
-            nearValue: 1.5,
-            far: 10000000,
-            farValue: 0.5
-          });
-        }
-      }
-    };
-
-    // --- Render detection layers from overlay slice + GeoJSONCacheService ---
-    // Presence in overlay.layers = should render. The middleware manages
-    // overlay presence based on job selection; there is no visibility flag.
-    const detectionLoadPromises: Array<{
-      jobId: string;
-      dataSource: GeoJsonDataSource;
-      loadPromise: Promise<void>;
-    }> = [];
-    for (const layerId of stableLayerOrder) {
-      const layer: OverlayLayer | undefined = stableOverlayLayers[layerId];
-      if (!layer) continue;
-      if (layer.source !== "detection") continue;
-      if (layer.metadata?.loading || layer.metadata?.error) continue;
-
-      const geoJsonData = cache.get(layerId);
-      if (!geoJsonData) continue;
-
-      // Get per-job style from jobs-slice, fall back to default
-      const jobId = layer.metadata?.jobId;
-      const jobStyle =
-        (jobId && stableLayerStyles[jobId]) || DEFAULT_RESULT_STYLE;
-
-      const detectionDataSource = new GeoJsonDataSource(layerId);
-      const classificationColors: Record<string, string> = {};
-      const palette = CLASSIFICATION_PALETTE;
-      let paletteIdx = 0;
-
-      const loadPromise = detectionDataSource.load(geoJsonData).then(() => {
-        detectionDataSource.entities.values.forEach((entity) => {
-          entity.name = `${jobId}::${entity.id}`;
-
-          // Determine color based on colorMode
-          let entityColor = jobStyle.color;
-          let entityOpacity = jobStyle.opacity;
-
-          if (colorMode !== "layer" && entity.properties) {
-            const props = entity.properties.getValue(
-              viewer.clock.currentTime
-            ) as Record<string, unknown>;
-            if (props) {
-              if (colorMode === "confidence") {
-                const conf = extractConfidence(props);
-                if (conf !== undefined) {
-                  const r =
-                    conf < 0.5
-                      ? 255
-                      : Math.round((1.0 - (conf - 0.5) * 2) * 255);
-                  const g = conf < 0.5 ? Math.round(conf * 2 * 255) : 255;
-                  entityColor = `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}00`;
-                } else {
-                  entityColor = "#808080";
-                }
-              } else if (colorMode === "classification") {
-                const cls = extractClassification(props);
-                if (cls) {
-                  if (!classificationColors[cls]) {
-                    classificationColors[cls] =
-                      palette[paletteIdx % palette.length];
-                    paletteIdx++;
-                  }
-                  entityColor = classificationColors[cls];
-                } else {
-                  entityColor = "#808080";
-                }
-              }
-            }
-          }
-
-          applyEntityStyling(entity, {
-            fillColor: entityColor,
-            color: entityColor,
-            fillOpacity: entityOpacity * 0.6,
-            opacity: entityOpacity,
-            weight: 2
-          });
-
-          if (entity.polygon || entity.polyline) {
-            entity.billboard = undefined;
-            entity.point = undefined;
-          }
-
-          if (confidenceThreshold > 0 && entity.properties) {
-            const props = entity.properties.getValue(
-              viewer.clock.currentTime
-            ) as Record<string, unknown>;
-            if (props) {
-              const conf = extractConfidence(props);
-              if (conf !== undefined && conf < confidenceThreshold) {
-                entity.show = false;
-              }
-            }
-          }
-        });
-      });
-      viewer.dataSources.add(detectionDataSource);
-      if (jobId) {
-        detectionLoadPromises.push({
-          jobId,
-          dataSource: detectionDataSource,
-          loadPromise
-        });
+    // Remove only the agent/STAC data sources we own (never detection sources,
+    // which useDetectionLayers reconciles independently).
+    const ownSources: GeoJsonDataSource[] = [];
+    for (let i = 0; i < viewer.dataSources.length; i++) {
+      const ds = viewer.dataSources.get(i);
+      if (ds.name === "agent-features" || ds.name?.startsWith("stac-")) {
+        ownSources.push(ds as GeoJsonDataSource);
       }
     }
-
-    // Auto-zoom should fire when a detection layer's data just finished
-    // loading — not when the loading-state layer record first appears.
-    // Track the set of jobs whose detection data is currently loaded and
-    // compute the "newly ready" diff against the previous render.
-    const currentVisibleJobIds =
-      computeLoadedDetectionJobIds(stableOverlayLayers);
-    const newlyVisibleSet = diffNewlyLoaded(
-      currentVisibleJobIds,
-      prevVisibleJobIdsRef.current
-    );
-    const newlyVisible: string[] = Array.from(newlyVisibleSet);
-    prevVisibleJobIdsRef.current = currentVisibleJobIds;
-
-    if (autoZoom && newlyVisible.length > 0) {
-      const targetJobId = newlyVisible[newlyVisible.length - 1];
-      const targetEntry = detectionLoadPromises.find(
-        (e) => e.jobId === targetJobId
-      );
-      if (targetEntry) {
-        targetEntry.loadPromise.then(() => {
-          const v = viewerRef.current;
-          if (!v || targetEntry.dataSource.entities.values.length === 0) return;
-
-          // Compute bounding sphere from entity centroids (handles points, polygons, polylines)
-          const entities = targetEntry.dataSource.entities.values;
-          const centroids: Cartesian3[] = [];
-          for (const entity of entities) {
-            // Point entities have a position
-            const pos = entity.position?.getValue(v.clock.currentTime) as
-              | Cartesian3
-              | undefined;
-            if (pos) {
-              centroids.push(pos);
-              continue;
-            }
-            // Polygon entities — compute centroid from hierarchy positions
-            const hierarchy = entity.polygon?.hierarchy?.getValue(
-              v.clock.currentTime
-            ) as { positions: Cartesian3[] } | undefined;
-            if (hierarchy?.positions && hierarchy.positions.length > 0) {
-              const pts = hierarchy.positions as Cartesian3[];
-              const sum = pts.reduce(
-                (acc, p) =>
-                  new Cartesian3(acc.x + p.x, acc.y + p.y, acc.z + p.z),
-                new Cartesian3(0, 0, 0)
-              );
-              centroids.push(
-                new Cartesian3(
-                  sum.x / pts.length,
-                  sum.y / pts.length,
-                  sum.z / pts.length
-                )
-              );
-              continue;
-            }
-            // Polyline entities — compute centroid from positions
-            const linePositions = entity.polyline?.positions?.getValue(
-              v.clock.currentTime
-            ) as Cartesian3[] | undefined;
-            if (linePositions && linePositions.length > 0) {
-              const pts = linePositions as Cartesian3[];
-              const sum = pts.reduce(
-                (acc, p) =>
-                  new Cartesian3(acc.x + p.x, acc.y + p.y, acc.z + p.z),
-                new Cartesian3(0, 0, 0)
-              );
-              centroids.push(
-                new Cartesian3(
-                  sum.x / pts.length,
-                  sum.y / pts.length,
-                  sum.z / pts.length
-                )
-              );
-            }
-          }
-
-          if (centroids.length > 0) {
-            const sphere = BoundingSphere.fromPoints(centroids);
-            const center = Cartographic.fromCartesian(sphere.center);
-            // Height based on bounding sphere radius — enough to see all features
-            const height = Math.max(sphere.radius * 3, 5000);
-
-            v.camera.flyTo({
-              destination: Cartesian3.fromRadians(
-                center.longitude,
-                center.latitude,
-                height
-              ),
-              orientation: {
-                heading: 0,
-                pitch: CesiumMath.toRadians(-90), // Straight down (nadir)
-                roll: 0
-              },
-              duration: 1.5
-            });
-          } else {
-            // Fallback: use viewer.flyTo if positions can't be extracted
-            v.flyTo(targetEntry.dataSource, { duration: 1.5 });
-          }
-        });
-      }
-    }
-
-    // --- Render agent features from inline features ---
-    if (features.length === 0) {
-      // Still set up click handler even with no agent features (detection layers may exist)
-      const clickHandler = viewer.screenSpaceEventHandler.setInputAction(
-        (event: { position: Cartesian2 }) => {
-          const pickedObject = viewer.scene.pick(event.position) as
-            | { id?: Entity }
-            | undefined;
-
-          if (defined(pickedObject) && defined(pickedObject.id)) {
-            const entity = pickedObject.id as Entity;
-            // Skip click-marker entities we added ourselves
-            if (entity.name === "__click-marker__") return;
-
-            const featureId = entity.name || entity.id;
-            dispatch(selectFeature(featureId || undefined));
-            viewer.selectedEntity = entity;
-
-            // Build popup data from entity properties
-            const position = getEntityPosition(entity, viewer);
-            if (position) {
-              const rawProps: Record<string, unknown> = {};
-              if (entity.properties) {
-                const vals = entity.properties.getValue(
-                  viewer.clock.currentTime
-                ) as Record<string, unknown> | undefined;
-                if (vals) Object.assign(rawProps, vals);
-              }
-              const { title, groups } = formatEntityProperties(rawProps);
-              addClickMarker(viewer, position, "#3388ff");
-              setPopupData({ position, groups, color: "#3388ff", title });
-            }
-          } else {
-            dispatch(selectFeature(undefined));
-            viewer.selectedEntity = undefined;
-            clearClickMarkers(viewer);
-            setPopupData(null);
-          }
-        },
-        ScreenSpaceEventType.LEFT_CLICK
-      );
-
-      return () => {
-        if (viewerRef.current && clickHandler) {
-          viewerRef.current.screenSpaceEventHandler.removeInputAction(
-            ScreenSpaceEventType.LEFT_CLICK
-          );
-        }
-      };
-    }
+    ownSources.forEach((ds) => viewer.dataSources.remove(ds));
 
     // HYBRID APPROACH: Handle both direct GeoJSON and STAC URL features
     const stacFeatures = features.filter(
@@ -716,13 +324,10 @@ export default function Cesium() {
         // Extract collection and item ID from STAC URL
         const stacUrl = feature.properties.stacUrl as string | undefined;
         if (!stacUrl) return;
-        const urlParts = stacUrl.split("/");
-        const collectionIndex = urlParts.indexOf("collections");
-        const itemsIndex = urlParts.indexOf("items");
+        const parsed = parseStacItemUrl(stacUrl);
 
-        if (collectionIndex !== -1 && itemsIndex !== -1) {
-          const collectionId = urlParts[collectionIndex + 1];
-          const itemId = urlParts[itemsIndex + 1];
+        if (parsed) {
+          const { collectionId, itemId } = parsed;
 
           try {
             // Use existing authenticated data catalog service
@@ -839,17 +444,7 @@ export default function Cesium() {
         );
       }
     };
-  }, [
-    features,
-    stableOverlayLayers,
-    stableLayerOrder,
-    stableLayerStyles,
-    viewerReady,
-    dispatch,
-    autoZoom,
-    confidenceThreshold,
-    colorMode
-  ]);
+  }, [features, viewerReady, dispatch]);
 
   if (!viewerConfig) {
     return <div>Loading Globe...</div>;

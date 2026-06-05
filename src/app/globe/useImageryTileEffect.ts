@@ -39,6 +39,30 @@ export function useImageryTileEffect(viewer: CesiumViewer | null): void {
   const overlayLayers = useAppSelector((state) => state.overlay.layers);
   const layerMapRef = useRef<Map<string, ImageryLayer>>(new Map());
 
+  // Keep a ref to the latest viewer (updated in an effect, not during render)
+  // so the unmount-only cleanup below can reach it. The `viewer` arg
+  // transitions null -> instance across renders.
+  const latestViewerRef = useRef(viewer);
+  useEffect(() => {
+    latestViewerRef.current = viewer;
+  }, [viewer]);
+
+  // Unmount-only cleanup. Runs solely when the host component unmounts (empty
+  // deps), never on the data-driven re-runs below, so it leaves the per-job
+  // add/remove behavior untouched. Resium owns the Cesium viewer and destroys
+  // it on unmount; guard isDestroyed() so we never touch a torn-down viewer,
+  // then drop our tracked layer references.
+  useEffect(() => {
+    const layerMap = layerMapRef.current;
+    return () => {
+      const v = latestViewerRef.current;
+      if (v && typeof v.isDestroyed === "function" && !v.isDestroyed()) {
+        layerMap.forEach((layer) => v.imageryLayers.remove(layer));
+      }
+      layerMap.clear();
+    };
+  }, []);
+
   useEffect(() => {
     if (!viewer) return;
 

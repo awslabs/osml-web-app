@@ -8,8 +8,8 @@
  *   3. Branch on auth mode: none → no header, session → forward NextAuth
  *      access token, custom → read the per-server token from mcp-token-store.
  */
-import type { McpAuthMode, McpServerConfig } from "@/hooks/use-mcp";
 import { getToken as getCustomToken } from "@/services/mcp-token-store";
+import type { McpAuthMode, McpServerConfig } from "@/types/mcp";
 import { validateMcpServerUrl } from "@/utils/mcp-server-validation";
 
 interface RegisteredServer {

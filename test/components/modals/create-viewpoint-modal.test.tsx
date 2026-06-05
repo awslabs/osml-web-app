@@ -8,7 +8,7 @@ import { screen } from "@testing-library/react";
 import { CreateViewpointModal } from "@/components/modals/create-viewpoint-modal";
 
 // Mock S3Selector to avoid s3 service dependency
-jest.mock("@/components/s3-selector", () => ({
+jest.mock("@/components/common/s3-selector", () => ({
   S3Selector: ({
     onBucketChange,
     onObjectChange

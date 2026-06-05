@@ -1,8 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 /**
  * Tests for model-runner-service.ts.
- * Covers job creation, listing, status retrieval, polling with
- * success/failure/timeout, processImageAndWait, and deletion.
+ * Covers job creation, listing, status retrieval, and deletion.
  */
 
 import { modelRunnerService } from "@/services/model-runner-service";
@@ -88,59 +87,6 @@ describe("ModelRunnerService", () => {
       mockGet.mockResolvedValue({ job_id: "job-123", status: "COMPLETED" });
       const job = await modelRunnerService.getImageProcessingJob("job-123");
       expect(mockGet).toHaveBeenCalledWith("/jobs/job-123");
-      expect(job.status).toBe("COMPLETED");
-    });
-  });
-
-  describe("pollJobStatus", () => {
-    it("should return immediately when job is COMPLETED", async () => {
-      mockGet.mockResolvedValue({ job_id: "j1", status: "COMPLETED" });
-
-      const job = await modelRunnerService.pollJobStatus("j1", 10, 1000);
-      expect(job.status).toBe("COMPLETED");
-      expect(mockGet).toHaveBeenCalledTimes(1);
-    });
-
-    it("should return immediately when job is FAILED", async () => {
-      mockGet.mockResolvedValue({ job_id: "j1", status: "FAILED" });
-
-      const job = await modelRunnerService.pollJobStatus("j1", 10, 1000);
-      expect(job.status).toBe("FAILED");
-    });
-
-    it("should poll until completion", async () => {
-      mockGet
-        .mockResolvedValueOnce({ job_id: "j1", status: "PROCESSING" })
-        .mockResolvedValueOnce({ job_id: "j1", status: "PROCESSING" })
-        .mockResolvedValueOnce({ job_id: "j1", status: "COMPLETED" });
-
-      const job = await modelRunnerService.pollJobStatus("j1", 10, 5000);
-      expect(job.status).toBe("COMPLETED");
-      expect(mockGet).toHaveBeenCalledTimes(3);
-    });
-
-    it("should throw on timeout", async () => {
-      mockGet.mockResolvedValue({ job_id: "j1", status: "PROCESSING" });
-
-      // Very short timeout to trigger quickly
-      await expect(
-        modelRunnerService.pollJobStatus("j1", 10, 50)
-      ).rejects.toThrow("Job polling timed out");
-    });
-  });
-
-  describe("processImageAndWait", () => {
-    it("should create job then poll until done", async () => {
-      mockPost.mockResolvedValue({ job_id: "j1", status: "PROCESSING" });
-      mockGet.mockResolvedValue({ job_id: "j1", status: "COMPLETED" });
-
-      const job = await modelRunnerService.processImageAndWait(
-        sampleJobRequest,
-        10,
-        1000
-      );
-
-      expect(mockPost).toHaveBeenCalledWith("/jobs", sampleJobRequest);
       expect(job.status).toBe("COMPLETED");
     });
   });

@@ -15,6 +15,7 @@ import React, {
 import { CreateIcon } from "@/components/icons";
 import { CreateJobModal } from "@/components/modals/create-image-job-modal";
 import { DeleteConfirmationModal } from "@/components/modals/delete-confirmation-modal";
+import { useJobsPolling } from "@/hooks/use-jobs-polling";
 import { isJobComplete } from "@/services/job-management";
 import { ImageProcessingJob } from "@/services/model-runner-service";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -22,11 +23,8 @@ import { fetchCollections } from "@/store/slices/data-catalog-slice";
 import {
   deleteJob,
   fetchJobs,
-  selectHasIncompleteJobs,
   selectJobs,
-  selectJobsRefreshing,
-  startJobsPolling,
-  stopJobsPolling
+  selectJobsRefreshing
 } from "@/store/slices/jobs-slice";
 
 /**
@@ -42,7 +40,6 @@ export const LayerControls = ({ children }: { children?: ReactNode }) => {
   // Redux state
   const jobs = useAppSelector(selectJobs);
   const isRefreshing = useAppSelector(selectJobsRefreshing);
-  const hasIncompleteJobs = useAppSelector(selectHasIncompleteJobs);
   const overlayLayers = useAppSelector((state) => state.overlay.layers);
 
   // Create modal state
@@ -55,17 +52,8 @@ export const LayerControls = ({ children }: { children?: ReactNode }) => {
   );
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Smart polling — start/stop based on incomplete jobs
-  useEffect(() => {
-    if (hasIncompleteJobs) {
-      dispatch(startJobsPolling());
-    } else {
-      dispatch(stopJobsPolling());
-    }
-    return () => {
-      dispatch(stopJobsPolling());
-    };
-  }, [hasIncompleteJobs, dispatch]);
+  // Smart polling — refresh the job list while any job is in progress.
+  useJobsPolling();
 
   // Collection refresh: dispatch fetchCollections() when a job's detection
   // data finishes loading (the overlay layer transitions from loading to

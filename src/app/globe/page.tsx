@@ -4,8 +4,8 @@
 import dynamic from "next/dynamic";
 
 import { ChatWidget } from "@/components/chat/chat-widget.tsx";
-import { Sidebar } from "@/components/sidebar.tsx";
 import { GlobeViewerSidebar } from "@/components/sidebars/globe-viewer-sidebar.tsx";
+import { Sidebar } from "@/components/sidebars/sidebar.tsx";
 
 const Cesium = dynamic(() => import("./cesium.tsx"), { ssr: false });
 

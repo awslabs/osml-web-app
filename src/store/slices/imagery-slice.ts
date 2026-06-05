@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-import { Viewpoint, ViewpointExtent } from "@/store/types.ts";
+import { Viewpoint, ViewpointExtent } from "@/types/viewpoint";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

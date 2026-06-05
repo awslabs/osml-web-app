@@ -6,10 +6,10 @@
 
 import { screen } from "@testing-library/react";
 
-import { Sidebar } from "@/components/sidebar";
+import { Sidebar } from "@/components/sidebars/sidebar";
 import { setDrawerOpen } from "@/store/slices/navbar-slice";
 
-import { createTestStore, renderWithStore } from "../test-utils";
+import { createTestStore, renderWithStore } from "../../test-utils";
 
 describe("Sidebar", () => {
   it("should render children when open", () => {

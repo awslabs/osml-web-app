@@ -2,7 +2,10 @@
 import { useCallback, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
-import { bedrockChatService } from "@/services/bedrock-service";
+import {
+  bedrockChatService,
+  type BedrockResponse
+} from "@/services/bedrock-service";
 import {
   clearThrottle,
   selectThrottleForModel,
@@ -11,27 +14,13 @@ import {
 import {
   addMessage,
   addNotification,
-  selectChatSession
+  selectChatHistory
 } from "@/store/slices/chat-session-slice";
 import { RootState } from "@/store/store";
 import { ChatMessage, MessageType } from "@/types/chat";
 import { isApiError } from "@/utils/api-client";
 
 import { useQuotaUsage } from "./use-quota-usage";
-
-interface BedrockResponse {
-  message: string;
-  toolCalls?: Array<{
-    toolUseId: string;
-    name: string;
-    input: Record<string, unknown>;
-  }>;
-  requiresToolExecution?: boolean;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-  };
-}
 
 export const useChatGeneration = ({
   openAiTools
@@ -48,8 +37,8 @@ export const useChatGeneration = ({
 
   const { fetchQuotaUsage } = useQuotaUsage();
 
-  // Get current session from Redux
-  const session = useSelector(selectChatSession);
+  // Get current chat history from Redux
+  const history = useSelector(selectChatHistory);
 
   // Get current throttle state for selected model
   const throttleInfo = useSelector((state: RootState) =>
@@ -85,8 +74,8 @@ export const useChatGeneration = ({
       try {
         // concatenate session history with additional messages
         const messagesToProcess = additionalMessages
-          ? [...session.history, ...additionalMessages]
-          : session.history;
+          ? [...history, ...additionalMessages]
+          : history;
 
         // Get current session messages, filtering out empty content
         // Only send role and content to match backend ChatMessage model
@@ -260,7 +249,7 @@ export const useChatGeneration = ({
     },
     [
       selectedModel,
-      session.history,
+      history,
       dispatch,
       openAiTools,
       notificationService,

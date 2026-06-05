@@ -7,7 +7,7 @@ import {
   ViewpointInfo,
   ViewpointMetadata,
   ViewpointStatistics
-} from "@/store/types.ts";
+} from "@/types/viewpoint";
 
 import { tileServerApiClient } from "../utils/api-client";
 
@@ -17,8 +17,6 @@ export interface GetViewpointsResponse {
 }
 
 class ViewpointService {
-  private retryCount: number = 3;
-
   async getViewpoints(): Promise<Viewpoint[]> {
     const data: GetViewpointsResponse =
       await tileServerApiClient.get("/latest/viewpoints");

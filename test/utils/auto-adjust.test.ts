@@ -7,7 +7,6 @@
  * applyAutoAdjustPreservingRgbGains.
  */
 
-import { ADJUSTMENT_CONSTRAINTS, DEFAULT_ADJUSTMENTS } from "@/store/types";
 import {
   applyAutoAdjustPreservingRgbGains,
   calculateOptimalAdjustments,
@@ -16,6 +15,10 @@ import {
   MIN_PIXELS_FOR_AUTO_ADJUST,
   PixelData
 } from "@/utils/auto-adjust";
+import {
+  ADJUSTMENT_CONSTRAINTS,
+  DEFAULT_ADJUSTMENTS
+} from "@/utils/image-adjustments";
 
 // Helper: create PixelData from uniform RGBA values
 function uniformPixels(

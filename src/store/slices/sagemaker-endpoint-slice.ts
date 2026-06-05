@@ -2,7 +2,20 @@
 import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import { sagemakerService } from "@/services/sagemaker-service";
-import { SageMakerEndpointState } from "@/store/types";
+
+export interface SageMakerEndpoint {
+  name: string;
+  status: string;
+  creationTime: string | null;
+}
+
+export interface SageMakerEndpointState {
+  endpoints: SageMakerEndpoint[];
+  selectedEndpoint: string | null;
+  isLoading: boolean;
+  error: string | null;
+  lastFetched: number | null;
+}
 
 const initialState: SageMakerEndpointState = {
   endpoints: [],

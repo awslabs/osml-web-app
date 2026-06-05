@@ -3,13 +3,13 @@ import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { Tool } from "use-mcp/react";
 
 import { siteConfig } from "@/config/site";
-import { McpPreferences, McpServerConfig } from "@/hooks/use-mcp";
 import {
   clearAllTokens,
   clearToken,
   setToken
 } from "@/services/mcp-token-store";
 import { ConfirmationRequiredPayload } from "@/types/chat";
+import { McpPreferences, McpServerConfig } from "@/types/mcp";
 import { parseMcpDefaultServers } from "@/utils/mcp-default-servers";
 import { validateMcpServerUrl } from "@/utils/mcp-server-validation";
 
@@ -37,6 +37,14 @@ interface McpState {
     payload: ConfirmationRequiredPayload;
   } | null;
   isProcessingToolChain: boolean;
+  /**
+   * Live MCP tool catalog and tool→server name map, populated from the active
+   * connections by AppInitializer. Serializable runtime state (the live
+   * `callTool` function is non-serializable and lives in the MCP runtime
+   * context, not here).
+   */
+  tools: Tool[];
+  toolToServerMap: Record<string, string>;
 }
 
 // Default MCP preferences
@@ -76,7 +84,9 @@ const initialState: McpState = {
     tool: null
   },
   destructiveConfirmation: null,
-  isProcessingToolChain: false
+  isProcessingToolChain: false,
+  tools: [],
+  toolToServerMap: {}
 };
 
 // Initialize MCP connections
@@ -451,6 +461,18 @@ const mcpSlice = createSlice({
     // Tool Chain Processing State
     setProcessingToolChain: (state, action: PayloadAction<boolean>) => {
       state.isProcessingToolChain = action.payload;
+    },
+
+    // Live tool catalog + tool→server map, refreshed from active connections.
+    setMcpRuntimeData: (
+      state,
+      action: PayloadAction<{
+        tools: Tool[];
+        toolToServerMap: Record<string, string>;
+      }>
+    ) => {
+      state.tools = action.payload.tools;
+      state.toolToServerMap = action.payload.toolToServerMap;
     }
   },
   extraReducers: (builder) => {
@@ -558,7 +580,8 @@ export const {
   closeToolApprovalModal,
   showDestructiveConfirmation,
   closeDestructiveConfirmation,
-  setProcessingToolChain
+  setProcessingToolChain,
+  setMcpRuntimeData
 } = mcpSlice.actions;
 
 export default mcpSlice.reducer;
@@ -583,21 +606,6 @@ export const selectDestructiveConfirmation = (state: { mcp: McpState }) =>
 export const selectIsProcessingToolChain = (state: { mcp: McpState }) =>
   state.mcp.isProcessingToolChain;
 
-// Global MCP utilities storage
-interface McpGlobals {
-  callTool:
-    | ((toolName: string, args: Record<string, unknown>) => Promise<unknown>)
-    | null;
-  toolToServerMap: Map<string, string>;
-  tools: Tool[];
-}
-
-const mcpGlobals: McpGlobals = {
-  callTool: null,
-  toolToServerMap: new Map(),
-  tools: []
-};
-
 // Computed selectors that aggregate data from server objects
 export const selectTotalToolCount = (state: { mcp: McpState }) =>
   state.mcp.servers
@@ -614,10 +622,7 @@ export const selectConnectedServersCount = (state: { mcp: McpState }) =>
 export const selectEnabledServersCount = (state: { mcp: McpState }) =>
   state.mcp.servers.filter((server) => server.enabled).length;
 
-// Global MCP selectors
-export const selectMcpCallTool = () => mcpGlobals.callTool;
-export const selectMcpToolToServerMap = () => mcpGlobals.toolToServerMap;
-export const selectMcpTools = () => mcpGlobals.tools;
-
-// Export globals for direct access
-export { mcpGlobals };
+// Live tool catalog + tool→server name map (populated by AppInitializer).
+export const selectMcpTools = (state: { mcp: McpState }) => state.mcp.tools;
+export const selectMcpToolToServerMap = (state: { mcp: McpState }) =>
+  state.mcp.toolToServerMap;

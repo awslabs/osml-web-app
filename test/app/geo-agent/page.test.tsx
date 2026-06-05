@@ -13,7 +13,7 @@ jest.mock("@/components/chat", () => ({
   )
 }));
 
-jest.mock("@/components/sidebar", () => ({
+jest.mock("@/components/sidebars/sidebar", () => ({
   Sidebar: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="sidebar">{children}</div>
   )

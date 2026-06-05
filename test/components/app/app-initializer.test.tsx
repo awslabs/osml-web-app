@@ -19,9 +19,9 @@ jest.mock("@/services/bedrock-service", () => ({
   bedrockModelsService: { getAvailableModels: jest.fn().mockResolvedValue([]) }
 }));
 
-import { AppInitializer } from "@/components/app-initializer";
+import { AppInitializer } from "@/components/app/app-initializer";
 
-import { renderWithStore } from "../test-utils";
+import { renderWithStore } from "../../test-utils";
 
 describe("AppInitializer", () => {
   it("should render without crashing", () => {

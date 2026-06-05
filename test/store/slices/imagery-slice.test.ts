@@ -14,7 +14,7 @@ import imageryReducer, {
   setViewpointExtent,
   ViewpointData
 } from "@/store/slices/imagery-slice";
-import { Viewpoint, ViewpointExtent } from "@/store/types";
+import { Viewpoint, ViewpointExtent } from "@/types/viewpoint";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

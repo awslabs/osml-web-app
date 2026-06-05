@@ -3,15 +3,18 @@
 
 import { Button } from "@heroui/button";
 
-import { AdjustmentSlider } from "@/components/image-adjustment-slider";
+import { AdjustmentSlider } from "@/components/image-adjustment/image-adjustment-slider";
 import { useAutoAdjust } from "@/contexts/auto-adjust-context";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   resetAdjustments,
   setAllAdjustments
 } from "@/store/slices/image-viewer-slice";
-import { ADJUSTMENT_CONSTRAINTS, ImageAdjustments } from "@/store/types";
 import { applyAutoAdjustPreservingRgbGains } from "@/utils/auto-adjust";
+import {
+  ADJUSTMENT_CONSTRAINTS,
+  ImageAdjustments
+} from "@/utils/image-adjustments";
 
 export interface ImageAdjustmentControlsProps {
   disabled?: boolean;

@@ -1,7 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-import { NavbarState } from "@/store/types.ts";
+export interface NavbarState {
+  drawerOpen: boolean;
+  currentRoute: string;
+  isChatWidgetExpanded: boolean;
+}
 
 const initialState: NavbarState = {
   drawerOpen: false,
@@ -35,11 +39,3 @@ export const {
   setChatWidgetExpanded
 } = navbarSlice.actions;
 export default navbarSlice.reducer;
-
-// Selectors
-export const selectDrawerOpen = (state: { navbar: NavbarState }) =>
-  state.navbar.drawerOpen;
-export const selectCurrentRoute = (state: { navbar: NavbarState }) =>
-  state.navbar.currentRoute;
-export const selectIsChatPageActive = (state: { navbar: NavbarState }) =>
-  state.navbar.currentRoute === "/geo-agent";

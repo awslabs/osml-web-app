@@ -139,7 +139,7 @@ export interface GetJobStatusResponse {
   error?: string;
 }
 
-export interface ListJobsResponse {
+export interface ListJobsToolResponse {
   success: boolean;
   jobs?: Array<{
     job_id: string;
@@ -729,7 +729,7 @@ export const listImageProcessingJobsTool: LocalMcpTool = {
     properties: {},
     additionalProperties: false
   },
-  handler: async (): Promise<ListJobsResponse> => {
+  handler: async (): Promise<ListJobsToolResponse> => {
     try {
       const result = await fetchAllJobs();
 

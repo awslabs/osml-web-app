@@ -3,12 +3,13 @@ import { useCallback, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { McpServerConfig } from "@/hooks/use-mcp";
+import { McpCallTool } from "@/hooks/use-mcp-runtime";
 import { dataCatalogService } from "@/services/data-catalog-service";
 import { deleteJob } from "@/services/job-management";
 import {
   addMessages,
   addNotification,
-  selectChatSession
+  selectChatHistory
 } from "@/store/slices/chat-session-slice";
 import {
   JobSnapshot,
@@ -19,10 +20,10 @@ import {
 import {
   closeDestructiveConfirmation,
   closeToolApprovalModal,
-  mcpGlobals,
   selectDestructiveConfirmation,
   selectIsProcessingToolChain,
   selectMcpPreferences,
+  selectMcpToolToServerMap,
   selectToolApprovalModal,
   setProcessingToolChain,
   showDestructiveConfirmation,
@@ -31,7 +32,6 @@ import {
 import { AppDispatch, RootState, store } from "@/store/store";
 import {
   ChatMessage,
-  ChatSession,
   ConfirmationRequiredPayload,
   MessageType,
   ToolExecutionStatus,
@@ -39,13 +39,15 @@ import {
 } from "@/types/chat";
 
 export const useToolChain = ({
-  generateResponse
+  generateResponse,
+  callTool
 }: {
   generateResponse: (additionalMessages?: ChatMessage[]) => Promise<void>;
+  callTool: McpCallTool | null;
 }) => {
   const dispatch = useDispatch();
-  // Get session from Redux
-  const session = useSelector(selectChatSession);
+  // Get chat history from Redux
+  const history = useSelector(selectChatHistory);
 
   const [callingToolName, setCallingToolName] = useState<string | undefined>();
   const [toolExecutions, setToolExecutions] = useState<ToolExecutionStatus[]>(
@@ -73,9 +75,8 @@ export const useToolChain = ({
     [dispatch]
   );
 
-  // Global MCP tools and utilities
-  const callTool = mcpGlobals.callTool;
-  const toolToServerMap = mcpGlobals.toolToServerMap;
+  // Global MCP tool→server map (Redux); `callTool` is injected via props.
+  const toolToServerMap = useSelector(selectMcpToolToServerMap);
 
   // Store Promise callbacks in a ref Map (not serializable, can't go in Redux)
   const pendingApprovals = useRef<
@@ -100,7 +101,7 @@ export const useToolChain = ({
         return true;
       }
 
-      const serverName = toolToServerMap?.get(toolName);
+      const serverName = toolToServerMap[toolName];
 
       if (!serverName) return false;
 
@@ -374,12 +375,12 @@ export const useToolChain = ({
   }, []);
 
   const processToolCallChain = useCallback(
-    async (currentSession: ChatSession) => {
+    async (currentHistory: ChatMessage[]) => {
       if (isProcessingToolChain) {
         return; // Prevent concurrent processing
       }
 
-      const lastMessage = currentSession.history.at(-1);
+      const lastMessage = currentHistory.at(-1);
 
       // Check if there are tool calls to process
       if (
@@ -537,8 +538,8 @@ export const useToolChain = ({
   );
 
   const startToolChain = useCallback(async () => {
-    await processToolCallChain(session);
-  }, [processToolCallChain, session]);
+    await processToolCallChain(history);
+  }, [processToolCallChain, history]);
 
   const stopToolChain = useCallback(() => {
     stopRequested.current = true;

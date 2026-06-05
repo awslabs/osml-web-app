@@ -197,14 +197,17 @@ lib/osml-web-app/
 │   ├── auth/                  # NextAuth configuration
 │   ├── components/            # React components
 │   │   ├── analytics/        # Detection analytics panel
+│   │   ├── app/              # App-level bootstrap (AppInitializer)
 │   │   ├── chat/             # Chat interface components
+│   │   ├── common/           # Shared/reusable components (S3 selector)
 │   │   ├── data-catalog/     # STAC catalog components
 │   │   ├── globe/            # Globe-specific components
+│   │   ├── image-adjustment/ # Image adjustment controls
 │   │   ├── map/              # Map-specific components
 │   │   ├── mcp/              # MCP server management
 │   │   ├── modals/           # Job creation and config modals
-│   │   ├── navigation/       # Navigation components
-│   │   └── sidebars/         # Sidebar panels
+│   │   ├── navigation/       # Navigation components (navbar)
+│   │   └── sidebars/         # Sidebar panels (+ shell)
 │   ├── hooks/                # Custom React hooks
 │   ├── mcp/                  # MCP implementation
 │   │   └── local-server/     # Local MCP tools
@@ -224,7 +227,6 @@ lib/osml-web-app/
 │       ├── authorizer/              # JWT authorizer
 │       ├── detectionBridgeTranslator/ # Detection result ingest
 │       ├── geojsonIngestTranslator/ # GeoJSON data ingest
-│       ├── lifecycleManager/        # EC2 lifecycle hooks
 │       ├── modelRunnerApi/          # Model Runner API
 │       ├── quotaCodesGenerator/     # Bedrock quota codes
 │       ├── stacLoader/             # STAC data loader (MCP server)

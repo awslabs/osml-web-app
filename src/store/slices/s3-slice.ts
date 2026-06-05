@@ -2,7 +2,28 @@
 import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import { s3Service } from "@/services/s3-service.ts";
-import { LoadingStatus, S3State } from "@/store/types.ts";
+import { LoadingStatus } from "@/types/loading-status";
+
+export interface S3Bucket {
+  name: string;
+  creationDate: string;
+}
+
+export interface S3Object {
+  key: string;
+  size: number;
+  lastModified: string;
+}
+
+export interface S3State {
+  buckets: S3Bucket[];
+  selectedBucket: string | null;
+  bucketObjects: S3Object[];
+  bucketsStatus: LoadingStatus;
+  bucketsError: string | null;
+  objectsStatus: LoadingStatus;
+  objectsError: string | null;
+}
 
 const initialState: S3State = {
   buckets: [],

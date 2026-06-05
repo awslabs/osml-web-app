@@ -5,7 +5,7 @@
  * Requirements: 1.5
  */
 
-import { ImageAdjustments } from "@/store/types";
+import { ImageAdjustments } from "@/utils/image-adjustments";
 
 /**
  * Style variables object for WebGLTileLayer.updateStyleVariables()

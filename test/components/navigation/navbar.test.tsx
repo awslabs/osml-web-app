@@ -8,7 +8,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
-import { Navbar } from "@/components/navbar";
+import { Navbar } from "@/components/navigation/navbar";
 
 const mockUseSession = (
   jest.requireMock("next-auth/react") as { useSession: jest.Mock }
@@ -35,7 +35,7 @@ jest.mock("next/link", () => ({
   }) => <a {...props}>{children}</a>
 }));
 
-import { renderWithStore } from "../test-utils";
+import { renderWithStore } from "../../test-utils";
 
 describe("Navbar", () => {
   it("should render the logo", () => {

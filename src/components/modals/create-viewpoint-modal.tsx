@@ -13,20 +13,12 @@ import {
 import { Select, SelectItem } from "@heroui/select";
 import { useState } from "react";
 
-import { S3Selector } from "@/components/s3-selector.tsx";
+import { S3Selector } from "@/components/common/s3-selector.tsx";
 import {
   DEFAULT_RANGE_ADJUSTMENT,
   DEFAULT_TILE_SIZE
 } from "@/config/tile-server-defaults";
-
-interface CreateViewpointForm {
-  viewpointName: string;
-  viewpointId: string;
-  bucketName: string;
-  objectKey: string;
-  tileSize: number;
-  rangeAdjustment: "NONE" | "MINMAX" | "DRA";
-}
+import { CreateViewpointForm } from "@/types/viewpoint";
 
 interface CreateViewpointModalProps {
   isOpen: boolean;

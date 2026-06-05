@@ -13,7 +13,7 @@ import { viewpointService } from "@/services/viewpoint-service";
 import imageryReducer, { ViewpointData } from "@/store/slices/imagery-slice";
 import jobsReducer, { fetchViewpointStatus } from "@/store/slices/jobs-slice";
 import overlayReducer from "@/store/slices/overlay-slice";
-import { Viewpoint, ViewpointExtent } from "@/store/types";
+import { Viewpoint, ViewpointExtent } from "@/types/viewpoint";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
