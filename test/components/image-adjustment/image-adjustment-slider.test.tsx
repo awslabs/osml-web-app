@@ -5,7 +5,7 @@
 
 import { render, screen } from "@testing-library/react";
 
-import { AdjustmentSlider } from "@/components/image-adjustment-slider";
+import { AdjustmentSlider } from "@/components/image-adjustment/image-adjustment-slider";
 
 describe("AdjustmentSlider", () => {
   const defaultProps = {

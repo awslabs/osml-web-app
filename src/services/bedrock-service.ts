@@ -96,31 +96,6 @@ interface QuotaInfo {
   reset_in_seconds?: number;
 }
 
-// ===== CONSTANTS =====
-
-/**
- * Output token burndown rate for Claude 4.x models using inference profiles.
- * Each output token consumes 5 tokens against the quota limit.
- */
-export const OUTPUT_BURNDOWN_RATE = 5;
-
-/**
- * Calculate effective tokens consumed against quota.
- * For Claude 4.x models with inference profiles:
- * - Input tokens: 1:1 burndown rate
- * - Output tokens: 5:1 burndown rate
- *
- * @param inputTokens - Number of input tokens
- * @param outputTokens - Number of output tokens
- * @returns Effective tokens consumed against quota
- */
-export function calculateEffectiveTokens(
-  inputTokens: number,
-  outputTokens: number
-): number {
-  return inputTokens + outputTokens * OUTPUT_BURNDOWN_RATE;
-}
-
 // ===== BEDROCK SERVICE =====
 
 class BedrockService {

@@ -16,7 +16,7 @@ import imageViewerReducer, {
   setAllAdjustments,
   setSelectedViewpoint
 } from "@/store/slices/image-viewer-slice";
-import { DEFAULT_ADJUSTMENTS } from "@/store/types";
+import { DEFAULT_ADJUSTMENTS } from "@/utils/image-adjustments";
 
 const createStore = () =>
   configureStore({ reducer: { imageViewer: imageViewerReducer } });
@@ -148,7 +148,7 @@ import {
   fetchViewpoints,
   fetchViewpointStatistics
 } from "@/store/slices/image-viewer-slice";
-import { LoadingStatus } from "@/store/types";
+import { LoadingStatus } from "@/types/loading-status";
 
 jest.mock("@/services/viewpoint-service", () => ({
   viewpointService: {

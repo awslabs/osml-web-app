@@ -20,7 +20,7 @@ import {
   ListAvailableImagesResponse,
   listAvailableImagesTool,
   listImageProcessingJobsTool,
-  ListJobsResponse,
+  ListJobsToolResponse,
   ListModelEndpointsResponse,
   listModelEndpointsTool,
   submitImageProcessingJobTool,
@@ -683,7 +683,7 @@ describe("Model Runner MCP Tools - Unit Tests", () => {
       const result = (await listImageProcessingJobsTool.handler(
         {},
         mockStore
-      )) as ListJobsResponse;
+      )) as ListJobsToolResponse;
 
       expect(result).toEqual({
         success: true,
@@ -705,7 +705,7 @@ describe("Model Runner MCP Tools - Unit Tests", () => {
       const result = (await listImageProcessingJobsTool.handler(
         {},
         mockStore
-      )) as ListJobsResponse;
+      )) as ListJobsToolResponse;
 
       expect(result).toEqual({
         success: false,
@@ -738,7 +738,7 @@ describe("Model Runner MCP Tools - Unit Tests", () => {
       const result = (await listImageProcessingJobsTool.handler(
         {},
         mockStore
-      )) as ListJobsResponse;
+      )) as ListJobsToolResponse;
 
       expect(result).toEqual({
         success: true,

@@ -6,7 +6,7 @@ import {
   clampAdjustment,
   ImageAdjustments,
   isValidAdjustment
-} from "@/store/types";
+} from "@/utils/image-adjustments";
 
 describe("Image Adjustment Types - Property-Based Tests", () => {
   /**

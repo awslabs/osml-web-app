@@ -4,7 +4,7 @@
  * Covers adjustmentsToStyleVariables and isWebGLSupported.
  */
 
-import { DEFAULT_ADJUSTMENTS } from "@/store/types";
+import { DEFAULT_ADJUSTMENTS } from "@/utils/image-adjustments";
 import { adjustmentsToStyleVariables, isWebGLSupported } from "@/utils/webgl";
 
 describe("adjustmentsToStyleVariables", () => {

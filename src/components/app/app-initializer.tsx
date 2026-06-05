@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useEffect } from "react";
 
 import { useMultipleMcp } from "@/hooks/use-mcp";
+import { useSetMcpCallTool } from "@/hooks/use-mcp-runtime";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   clearModels,
@@ -13,10 +14,10 @@ import {
 import { fetchJobs } from "@/store/slices/jobs-slice";
 import {
   initializeMcpConnections,
-  mcpGlobals,
   selectMcpInitialized,
   selectMcpPreferences,
-  selectMcpServers
+  selectMcpServers,
+  setMcpRuntimeData
 } from "@/store/slices/mcp-slice";
 
 /**
@@ -41,16 +42,18 @@ export const AppInitializer = () => {
     status === "authenticated"
   );
 
-  // Store global MCP utilities for use by ChatInterface
+  // Bridge the live MCP runtime to the rest of the app. The serializable tool
+  // catalog and tool→server map go into Redux; the non-serializable live
+  // `callTool` function goes into the MCP runtime context.
+  useSetMcpCallTool(mcpConnections.callTool);
   useEffect(() => {
-    mcpGlobals.callTool = mcpConnections.callTool;
-    mcpGlobals.toolToServerMap = mcpConnections.toolToServerMap;
-    mcpGlobals.tools = mcpConnections.tools;
-  }, [
-    mcpConnections.callTool,
-    mcpConnections.toolToServerMap,
-    mcpConnections.tools
-  ]);
+    dispatch(
+      setMcpRuntimeData({
+        tools: mcpConnections.tools,
+        toolToServerMap: Object.fromEntries(mcpConnections.toolToServerMap)
+      })
+    );
+  }, [dispatch, mcpConnections.toolToServerMap, mcpConnections.tools]);
 
   useEffect(() => {
     if (status === "authenticated" && session?.accessToken && !lastFetched) {

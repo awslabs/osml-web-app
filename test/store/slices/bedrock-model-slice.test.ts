@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 /**
  * Unit tests for bedrock-model-slice.ts sync reducers.
- * Covers setSelectedModel, clearError, clearModels, setDefaultModel, setConnectionStatus.
+ * Covers setSelectedModel, clearError, and clearModels.
  */
 
 import { configureStore } from "@reduxjs/toolkit";
@@ -9,8 +9,6 @@ import { configureStore } from "@reduxjs/toolkit";
 import bedrockModelReducer, {
   clearError,
   clearModels,
-  setConnectionStatus,
-  setDefaultModel,
   setSelectedModel
 } from "@/store/slices/bedrock-model-slice";
 
@@ -67,23 +65,10 @@ describe("bedrock-model-slice", () => {
     });
   });
 
-  describe("setConnectionStatus", () => {
-    it("should update connection status", () => {
-      const store = createStore();
-      store.dispatch(setConnectionStatus("connecting"));
-      expect(store.getState().bedrockModel.connectionStatus).toBe("connecting");
-      store.dispatch(setConnectionStatus("connected"));
-      expect(store.getState().bedrockModel.connectionStatus).toBe("connected");
-      store.dispatch(setConnectionStatus("failed"));
-      expect(store.getState().bedrockModel.connectionStatus).toBe("failed");
-    });
-  });
-
   describe("clearModels", () => {
     it("should reset all model state", () => {
       const store = createStore();
       store.dispatch(setSelectedModel(makeModel("m1", "Model 1")));
-      store.dispatch(setConnectionStatus("connected"));
       store.dispatch(clearModels());
 
       const state = store.getState().bedrockModel;
@@ -91,21 +76,6 @@ describe("bedrock-model-slice", () => {
       expect(state.selectedModel).toBeNull();
       expect(state.lastFetched).toBeNull();
       expect(state.connectionStatus).toBe("disconnected");
-    });
-  });
-
-  describe("setDefaultModel", () => {
-    it("should do nothing when no models available", () => {
-      const store = createStore();
-      store.dispatch(setDefaultModel());
-      expect(store.getState().bedrockModel.selectedModel).toBeNull();
-    });
-
-    it("should do nothing when a model is already selected", () => {
-      const store = createStore();
-      store.dispatch(setSelectedModel(makeModel("m1", "Model 1")));
-      store.dispatch(setDefaultModel());
-      expect(store.getState().bedrockModel.selectedModel?.modelId).toBe("m1");
     });
   });
 });
@@ -189,54 +159,6 @@ describe("bedrock-model-slice async thunks", () => {
       fetchAvailableModels.rejected(null, "r", undefined, "Network error")
     );
     expect(store.getState().bedrockModel.error).toBe("Network error");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Additional coverage for setDefaultModel with models (lines 75-87)
-// ---------------------------------------------------------------------------
-
-describe("bedrock-model-slice - setDefaultModel with models", () => {
-  it("selects the first model when no model is currently selected", () => {
-    const store = createStore();
-    store.dispatch(
-      fetchAvailableModels.fulfilled(
-        {
-          models: [
-            makeModel(
-              "us.anthropic.claude-opus-4-6-20250929-v1:0",
-              "Claude Opus 4.6"
-            ),
-            makeModel(
-              "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-              "Claude Sonnet 4.5"
-            )
-          ],
-          preferredModelId: null
-        } as never,
-        "r",
-        undefined
-      )
-    );
-
-    store.dispatch(setSelectedModel(null));
-    store.dispatch(setDefaultModel());
-
-    expect(store.getState().bedrockModel.selectedModel?.modelId).toBe(
-      "us.anthropic.claude-opus-4-6-20250929-v1:0"
-    );
-  });
-
-  it("fulfilled with empty models should not select anything", () => {
-    const store = createStore();
-    store.dispatch(
-      fetchAvailableModels.fulfilled(
-        { models: [], preferredModelId: null } as never,
-        "r",
-        undefined
-      )
-    );
-    expect(store.getState().bedrockModel.selectedModel).toBeNull();
   });
 });
 

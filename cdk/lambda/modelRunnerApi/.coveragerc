@@ -1,0 +1,26 @@
+# Copyright Amazon.com, Inc. or its affiliates.
+[run]
+source =
+    app.py
+    config.py
+omit =
+    */tests/*
+    */test_*
+    */.tox/*
+    */site-packages/*
+    */dist-packages/*
+    */lib/python*/*
+    */__pycache__/*
+    index.py
+    models.py
+    status_monitor.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod

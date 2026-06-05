@@ -157,7 +157,23 @@ export class ModelRunnerApiConstruct extends Construct {
       runtime: Runtime.PYTHON_3_13,
       handler: "index.handler",
       code: Code.fromAsset(
-        join(__dirname, "..", "..", "lambda", "modelRunnerApi")
+        join(__dirname, "..", "..", "lambda", "modelRunnerApi"),
+        {
+          exclude: [
+            "**/__pycache__",
+            "**/*.pyc",
+            ".tox",
+            ".hypothesis",
+            ".pytest_cache",
+            "conda",
+            "htmlcov",
+            "tests",
+            ".coverage",
+            ".coveragerc",
+            "pytest.ini",
+            "tox.ini"
+          ]
+        }
       ),
       layers: [pythonDependenciesLayer],
       environment: {
@@ -205,7 +221,23 @@ export class ModelRunnerApiConstruct extends Construct {
       runtime: Runtime.PYTHON_3_13,
       handler: "status_monitor.handler",
       code: Code.fromAsset(
-        join(__dirname, "..", "..", "lambda", "modelRunnerApi")
+        join(__dirname, "..", "..", "lambda", "modelRunnerApi"),
+        {
+          exclude: [
+            "**/__pycache__",
+            "**/*.pyc",
+            ".tox",
+            ".hypothesis",
+            ".pytest_cache",
+            "conda",
+            "htmlcov",
+            "tests",
+            ".coverage",
+            ".coveragerc",
+            "pytest.ini",
+            "tox.ini"
+          ]
+        }
       ),
       environment: {
         DDB_TABLE: this.jobsTable.tableName

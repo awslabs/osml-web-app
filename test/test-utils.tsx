@@ -15,7 +15,6 @@ import bedrockModelReducer from "@/store/slices/bedrock-model-slice";
 import bedrockQuotaReducer from "@/store/slices/bedrock-quota-slice";
 import bedrockThrottleReducer from "@/store/slices/bedrock-throttle-slice";
 import chatSessionReducer from "@/store/slices/chat-session-slice";
-import chatWidgetReducer from "@/store/slices/chat-widget-slice";
 import dataCatalogReducer from "@/store/slices/data-catalog-slice";
 import imageViewerReducer from "@/store/slices/image-viewer-slice";
 import imageryReducer from "@/store/slices/imagery-slice";
@@ -39,7 +38,6 @@ const testReducers = {
   bedrockModel: bedrockModelReducer,
   bedrockThrottle: bedrockThrottleReducer,
   bedrockQuota: bedrockQuotaReducer,
-  chatWidget: chatWidgetReducer,
   chatSession: chatSessionReducer,
   viewport: viewportReducer,
   overlay: overlayReducer,

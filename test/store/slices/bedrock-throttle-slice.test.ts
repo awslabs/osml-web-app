@@ -8,10 +8,8 @@
 import { configureStore } from "@reduxjs/toolkit";
 
 import bedrockThrottleReducer, {
-  clearAllThrottles,
   clearExpiredThrottles,
   clearThrottle,
-  selectIsAnyModelThrottled,
   selectThrottleForModel,
   setThrottled
 } from "@/store/slices/bedrock-throttle-slice";
@@ -135,33 +133,6 @@ describe("bedrock-throttle-slice", () => {
     });
   });
 
-  describe("clearAllThrottles", () => {
-    it("should clear all model throttles", () => {
-      const store = createStore();
-      store.dispatch(
-        setThrottled({
-          modelId: "model-a",
-          errorType: "rate_limit",
-          message: "A",
-          retryAfterSeconds: 30,
-          timestamp: "2025-01-01T00:00:00Z"
-        })
-      );
-      store.dispatch(
-        setThrottled({
-          modelId: "model-b",
-          errorType: "rate_limit",
-          message: "B",
-          retryAfterSeconds: 30,
-          timestamp: "2025-01-01T00:00:00Z"
-        })
-      );
-
-      store.dispatch(clearAllThrottles());
-      expect(selectIsAnyModelThrottled(store.getState())).toBe(false);
-    });
-  });
-
   describe("clearExpiredThrottles", () => {
     it("should clear throttles whose retryAt is in the past", () => {
       const store = createStore();
@@ -201,25 +172,6 @@ describe("bedrock-throttle-slice", () => {
     it("selectThrottleForModel should return null for unknown model", () => {
       const store = createStore();
       expect(selectThrottleForModel(store.getState(), "unknown")).toBeNull();
-    });
-
-    it("selectIsAnyModelThrottled should return false when empty", () => {
-      const store = createStore();
-      expect(selectIsAnyModelThrottled(store.getState())).toBe(false);
-    });
-
-    it("selectIsAnyModelThrottled should return true when any model is throttled", () => {
-      const store = createStore();
-      store.dispatch(
-        setThrottled({
-          modelId: "model-a",
-          errorType: "rate_limit",
-          message: "Throttled",
-          retryAfterSeconds: 30,
-          timestamp: "2025-01-01T00:00:00Z"
-        })
-      );
-      expect(selectIsAnyModelThrottled(store.getState())).toBe(true);
     });
   });
 });

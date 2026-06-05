@@ -11,8 +11,9 @@ import { useDispatch, useSelector } from "react-redux";
 
 import { DestructiveConfirmationCard } from "@/components/chat/destructive-confirmation-card";
 import { ToolApprovalModal } from "@/components/mcp/tool-approval-modal";
-import { siteConfig } from "@/config/site";
+import { useAutoToolChain } from "@/hooks/use-auto-tool-chain";
 import { useChatGeneration } from "@/hooks/use-chat-generation";
+import { useMcpCallTool } from "@/hooks/use-mcp-runtime";
 import { useSmartQuotaPolling } from "@/hooks/use-smart-quota-polling";
 import { useToolChain } from "@/hooks/use-tool-chain";
 import { bedrockModelsService } from "@/services/bedrock-service";
@@ -27,13 +28,14 @@ import {
   addNotification,
   clearHistory,
   removeMessage,
-  selectChatSession,
+  selectChatHistory,
   updateUserActivity
 } from "@/store/slices/chat-session-slice";
 import {
-  mcpGlobals,
   selectIsProcessingToolChain,
   selectMcpPreferences,
+  selectMcpTools,
+  selectMcpToolToServerMap,
   selectTotalToolCount,
   toggleToolAutoApproval
 } from "@/store/slices/mcp-slice";
@@ -46,6 +48,7 @@ import { LoadingState, useSystemReady } from "./loading-state";
 import { QuotaConfigModal } from "./quota-config-modal";
 import { QuotaMeter } from "./quota-meter";
 import { ThrottleCountdown } from "./throttle-countdown";
+import { ToolLimitWarningModal } from "./tool-limit-warning-modal";
 
 export interface ChatInterfaceProps {
   className?: string;
@@ -71,15 +74,6 @@ export const ChatInterface = ({
   const [isConnected] = useState(true); // Always connected for MCP
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dispatch = useDispatch();
-
-  // Refs to track processing state and prevent concurrent execution
-  const lastProcessedMessageIndex = useRef(-1);
-
-  // Circuit breaker mechanism to prevent infinite tool loops
-  const consecutiveToolCallCount = useRef(0);
-  const TOOL_CALL_LIMIT = siteConfig.chat.tool_call_limit;
-  const [showToolLimitWarning, setShowToolLimitWarning] = useState(false);
-  const pendingToolChainExecution = useRef<(() => Promise<void>) | null>(null);
   const [showQuotaConfig, setShowQuotaConfig] = useState(false);
 
   // Redux selectors
@@ -89,15 +83,18 @@ export const ChatInterface = ({
   const mcpPreferences = useSelector(selectMcpPreferences);
   const totalToolCount = useSelector(selectTotalToolCount);
   const isProcessingToolChain = useSelector(selectIsProcessingToolChain);
-  const session = useSelector(selectChatSession);
+  const history = useSelector(selectChatHistory);
 
   // Get throttle info for current model
   const throttleInfo = useSelector((state: RootState) =>
     selectedModel ? selectThrottleForModel(state, selectedModel.modelId) : null
   );
 
-  // Global MCP tools
-  const mcpTools = mcpGlobals.tools;
+  // Global MCP runtime: tool catalog + tool→server map from Redux, live
+  // tool caller from the MCP runtime context.
+  const mcpTools = useSelector(selectMcpTools);
+  const toolToServerMap = useSelector(selectMcpToolToServerMap);
+  const callTool = useMcpCallTool();
 
   // Format tools for OpenAI compatibility - driven from Redux state
   const openAiTools =
@@ -138,8 +135,20 @@ export const ChatInterface = ({
     handleDestructiveConfirm,
     handleDestructiveCancel
   } = useToolChain({
-    generateResponse
+    generateResponse,
+    callTool
   });
+
+  // Auto-run the tool chain on incoming tool calls, with an infinite-loop
+  // circuit breaker. Owns the loop counters + warning-modal state.
+  const {
+    toolCallLimit,
+    showToolLimitWarning,
+    resetToolCallCount,
+    resetToolLoopState,
+    cancelToolLimit,
+    continueToolLimit
+  } = useAutoToolChain({ history, isProcessingToolChain, startToolChain });
 
   // Auto-clear expired throttles periodically
   useEffect(() => {
@@ -160,46 +169,6 @@ export const ChatInterface = ({
   // Initialize smart quota polling
   useSmartQuotaPolling();
 
-  useEffect(() => {
-    const handleToolCalls = async () => {
-      if (session.history.length && !isProcessingToolChain) {
-        const currentMessageIndex = session.history.length - 1;
-        const lastMessage = session.history.at(-1);
-
-        // Check if the last message has tool calls that need to be processed
-        if (
-          lastMessage?.type === MessageType.AI &&
-          lastMessage.toolCalls &&
-          lastMessage.toolCalls.length > 0 &&
-          currentMessageIndex > lastProcessedMessageIndex.current
-        ) {
-          // Update lastProcessedIndex IMMEDIATELY to prevent race conditions
-          lastProcessedMessageIndex.current = currentMessageIndex;
-
-          // Circuit breaker: Check for potential infinite loop
-          consecutiveToolCallCount.current += 1;
-
-          if (consecutiveToolCallCount.current > TOOL_CALL_LIMIT) {
-            // Store the pending execution for after user confirmation
-            pendingToolChainExecution.current = async () => {
-              await startToolChain();
-            };
-
-            // Show warning modal to user
-            setShowToolLimitWarning(true);
-
-            return;
-          }
-
-          // Start the tool chain - this will handle multiple rounds of tool calls automatically
-          await startToolChain();
-        }
-      }
-    };
-
-    handleToolCalls();
-  }, [session.history, TOOL_CALL_LIMIT, isProcessingToolChain, startToolChain]);
-
   // Use consolidated system readiness hook
   const { isSystemReady, isLoadingModels, isLoadingMcpTools } =
     useSystemReady();
@@ -210,7 +179,7 @@ export const ChatInterface = ({
 
   useEffect(() => {
     if (
-      session.history.length === 0 &&
+      history.length === 0 &&
       isSystemReady &&
       totalToolCount > 0 &&
       !hasAddedWelcomeMessage.current
@@ -226,12 +195,12 @@ export const ChatInterface = ({
     }
 
     // Reset flag when history is cleared
-    if (session.history.length === 0) {
+    if (history.length === 0) {
       hasAddedWelcomeMessage.current = false;
     }
   }, [
     isSystemReady,
-    session.history.length,
+    history.length,
     totalToolCount,
     getWelcomeMessage,
     dispatch
@@ -242,7 +211,7 @@ export const ChatInterface = ({
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [session.history.length]);
+  }, [history.length]);
 
   // Notify parent of connection changes
   useEffect(() => {
@@ -262,13 +231,13 @@ export const ChatInterface = ({
         dispatch(updateUserActivity());
 
         // Reset tool call counter when human provides input
-        consecutiveToolCallCount.current = 0;
+        resetToolCallCount();
 
         // CRITICAL FIX: Build complete message context synchronously
         const messagesToAdd: NewChatMessage[] = [];
 
         // Add welcome message if this is the first user interaction
-        if (session.history.length === 0 && totalToolCount > 0) {
+        if (history.length === 0 && totalToolCount > 0) {
           const systemMessage = new NewChatMessage({
             type: MessageType.AI,
             content: getWelcomeMessage(totalToolCount)
@@ -304,21 +273,21 @@ export const ChatInterface = ({
     [
       selectedModel,
       generateResponse,
-      session,
+      history,
       totalToolCount,
       getWelcomeMessage,
+      resetToolCallCount,
       dispatch
     ]
   );
 
   const handleClearHistory = useCallback(() => {
     // Reset circuit breaker when clearing history
-    consecutiveToolCallCount.current = 0;
+    resetToolLoopState();
 
     // Clear history in Redux
     dispatch(clearHistory());
-    lastProcessedMessageIndex.current = -1;
-  }, [dispatch]);
+  }, [dispatch, resetToolLoopState]);
 
   const handleStop = useCallback(() => {
     stopToolChain();
@@ -327,7 +296,7 @@ export const ChatInterface = ({
 
   const handleRetry = useCallback(
     async (messageId: string) => {
-      const failedMessage = session.history.find((m) => m.id === messageId);
+      const failedMessage = history.find((m) => m.id === messageId);
 
       // Check if this was ANY throttled AI message (includes tool calls AND final summaries)
       if (
@@ -380,14 +349,14 @@ export const ChatInterface = ({
         }
       }
     },
-    [dispatch, generateResponse, session.history, selectedModel, startToolChain]
+    [dispatch, generateResponse, history, selectedModel, startToolChain]
   );
 
   const handleToggleAutoApproval = () => {
     if (!toolApprovalModal?.isOpen || !toolApprovalModal?.tool) return;
 
     const toolName = toolApprovalModal.tool.name;
-    const serverName = mcpGlobals.toolToServerMap.get(toolName);
+    const serverName = toolToServerMap[toolName];
     const server = mcpPreferences.enabledServers.find(
       (s) => s.name === serverName
     );
@@ -402,7 +371,7 @@ export const ChatInterface = ({
     if (!toolApprovalModal?.tool) return false;
 
     const toolName = toolApprovalModal.tool.name;
-    const serverName = mcpGlobals.toolToServerMap.get(toolName);
+    const serverName = toolToServerMap[toolName];
     const server = mcpPreferences.enabledServers.find(
       (s) => s.name === serverName
     );
@@ -520,7 +489,7 @@ export const ChatInterface = ({
 
               <Button
                 color="warning"
-                isDisabled={session.history.length === 0}
+                isDisabled={history.length === 0}
                 size="sm"
                 variant="flat"
                 onPress={handleClearHistory}
@@ -559,9 +528,9 @@ export const ChatInterface = ({
       {/* Messages */}
       <Card className="flex-1 mb-4">
         <CardBody className="h-full overflow-y-auto">
-          {session.history.length === 0 && !isSystemReady && <LoadingState />}
+          {history.length === 0 && !isSystemReady && <LoadingState />}
 
-          {session.history.length === 0 && isSystemReady && (
+          {history.length === 0 && isSystemReady && (
             <div className="h-full flex flex-col items-center justify-center p-4">
               <div className="text-sm text-center">
                 <div className="space-y-2">
@@ -575,7 +544,7 @@ export const ChatInterface = ({
           )}
 
           <div className="space-y-4">
-            {session.history.map((message) => {
+            {history.map((message) => {
               // Tool result messages aren't shown directly; agent responses
               // surface the outcome.
               if (message.type === MessageType.TOOL) {
@@ -664,9 +633,7 @@ export const ChatInterface = ({
         <ToolApprovalModal
           isAutoApproved={isCurrentToolAutoApproved()}
           isOpen={true}
-          serverName={mcpGlobals.toolToServerMap.get(
-            toolApprovalModal.tool.name
-          )}
+          serverName={toolToServerMap[toolApprovalModal.tool.name]}
           tool={toolApprovalModal.tool}
           onApprove={handleToolApproval}
           onReject={handleToolRejection}
@@ -676,51 +643,11 @@ export const ChatInterface = ({
 
       {/* Circuit Breaker Warning Modal */}
       {showToolLimitWarning && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <Card className="max-w-md w-full">
-            <CardHeader>
-              <h3 className="text-lg font-semibold text-warning">
-                Tool Execution Limit Reached
-              </h3>
-            </CardHeader>
-            <CardBody className="space-y-4">
-              <p className="text-sm text-default-600">
-                The AI has made {TOOL_CALL_LIMIT} consecutive tool calls. This
-                might indicate an infinite loop. Do you want to continue
-                processing or stop here?
-              </p>
-              <div className="flex gap-2 justify-end">
-                <Button
-                  color="default"
-                  variant="flat"
-                  onPress={() => {
-                    // Stop tool chain and reset
-                    consecutiveToolCallCount.current = 0;
-                    pendingToolChainExecution.current = null;
-                    setShowToolLimitWarning(false);
-                  }}
-                >
-                  Stop
-                </Button>
-                <Button
-                  color="primary"
-                  onPress={async () => {
-                    // Continue with tool execution
-                    consecutiveToolCallCount.current = 0; // Reset counter
-                    setShowToolLimitWarning(false);
-
-                    if (pendingToolChainExecution.current) {
-                      await pendingToolChainExecution.current();
-                      pendingToolChainExecution.current = null;
-                    }
-                  }}
-                >
-                  Continue
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
+        <ToolLimitWarningModal
+          limit={toolCallLimit}
+          onContinue={continueToolLimit}
+          onStop={cancelToolLimit}
+        />
       )}
 
       {/* Input */}

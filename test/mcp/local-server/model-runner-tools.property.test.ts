@@ -18,7 +18,7 @@ import {
   ListAvailableImagesResponse,
   listAvailableImagesTool,
   listImageProcessingJobsTool,
-  ListJobsResponse,
+  ListJobsToolResponse,
   ListModelEndpointsResponse,
   listModelEndpointsTool,
   submitImageProcessingJobTool,
@@ -419,7 +419,7 @@ describe("Model Runner MCP Tools - Property-Based Tests", () => {
             const result = (await listImageProcessingJobsTool.handler(
               {},
               mockStore
-            )) as ListJobsResponse;
+            )) as ListJobsToolResponse;
 
             expect(result.success).toBe(true);
             // Property: All required fields are present in each job
@@ -464,7 +464,7 @@ describe("Model Runner MCP Tools - Property-Based Tests", () => {
       const jobsResult = (await listImageProcessingJobsTool.handler(
         {},
         mockStore
-      )) as ListJobsResponse;
+      )) as ListJobsToolResponse;
       expect(typeof jobsResult.success).toBe("boolean");
     });
   });
@@ -765,7 +765,7 @@ describe("Model Runner MCP Tools - Property-Based Tests", () => {
             const result = (await listImageProcessingJobsTool.handler(
               {},
               mockStore
-            )) as ListJobsResponse;
+            )) as ListJobsToolResponse;
 
             expect(result.success).toBe(true);
             expect(result.jobs!.length).toBe(jobs.length);

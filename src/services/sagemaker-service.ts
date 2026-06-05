@@ -1,11 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates.
+import { SageMakerEndpoint } from "@/store/slices/sagemaker-endpoint-slice";
 import { utilityApiClient } from "@/utils/api-client";
 
-export interface SageMakerEndpoint {
-  name: string;
-  status: string;
-  creationTime: string | null;
-}
+export type { SageMakerEndpoint };
 
 interface SageMakerEndpointsResponse {
   endpoints: SageMakerEndpoint[];

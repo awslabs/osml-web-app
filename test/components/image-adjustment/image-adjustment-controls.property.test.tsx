@@ -9,7 +9,7 @@ import {
   ADJUSTMENT_CONSTRAINTS,
   clampAdjustment,
   ImageAdjustments
-} from "@/store/types";
+} from "@/utils/image-adjustments";
 
 // Arbitrary generators for valid adjustment values within their ranges
 const exposureArb = fc.double({ min: -1, max: 1, noNaN: true });

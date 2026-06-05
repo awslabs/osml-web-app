@@ -1,13 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import { createSelector, createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-import {
-  ChatMessage,
-  ChatSession,
-  MessageType,
-  ToolCall,
-  ToolResult
-} from "@/types/chat";
+import { ChatMessage, MessageType, ToolCall, ToolResult } from "@/types/chat";
 
 // Plain object interface for Redux (serializable)
 interface SerializableChatMessage {
@@ -231,23 +225,7 @@ export {
 // Export internal actions that don't need serialization
 export const { updateUserActivity } = chatSessionSlice.actions;
 
-// Base selector for the raw session state
-const selectChatSessionState = (state: { chatSession: ChatSessionState }) =>
-  state.chatSession;
-
-// Memoized selectors that convert back to ChatMessage class instances
-export const selectChatSession = createSelector(
-  [selectChatSessionState],
-  (session): ChatSession => ({
-    ...session,
-    history: session.history.map(serializableToMessage),
-    notifications: session.notifications.map((n) => ({
-      ...n,
-      timestamp: new Date(n.timestamp)
-    }))
-  })
-);
-
+// Memoized selector that converts the raw history into ChatMessage instances
 export const selectChatHistory = createSelector(
   [(state: { chatSession: ChatSessionState }) => state.chatSession.history],
   (history): ChatMessage[] => history.map(serializableToMessage)

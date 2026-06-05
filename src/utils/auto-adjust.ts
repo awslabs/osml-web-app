@@ -12,7 +12,7 @@ import {
   ADJUSTMENT_CONSTRAINTS,
   clampAdjustment,
   ImageAdjustments
-} from "@/store/types";
+} from "@/utils/image-adjustments";
 
 /**
  * Histogram data computed from pixel samples.

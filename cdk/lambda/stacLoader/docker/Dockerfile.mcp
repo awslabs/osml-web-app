@@ -61,8 +61,10 @@ FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal AS mcp-server
 ENV CONDA_ENV_NAME="osml_stac_loader"
 ENV PATH="/opt/conda/bin:/opt/conda/envs/osml_stac_loader/bin:/usr/local/bin:/usr/bin:/bin"
 
-# Install curl (HEALTHCHECK) and shadow-utils (useradd); neither is in the minimal base.
-RUN dnf install -y curl-minimal shadow-utils && \
+# Update base packages, then install curl (HEALTHCHECK) and
+# shadow-utils (useradd) — neither is in the minimal base.
+RUN dnf -y upgrade && \
+    dnf install -y curl-minimal shadow-utils && \
     dnf clean all && \
     rm -rf /var/cache/dnf
 

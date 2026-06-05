@@ -63,10 +63,6 @@ const bedrockThrottleSlice = createSlice({
       }
     },
 
-    clearAllThrottles: (state) => {
-      state.throttleByModel = {};
-    },
-
     // Auto-clear expired throttles
     clearExpiredThrottles: (state) => {
       const now = Date.now();
@@ -81,12 +77,8 @@ const bedrockThrottleSlice = createSlice({
   }
 });
 
-export const {
-  setThrottled,
-  clearThrottle,
-  clearAllThrottles,
-  clearExpiredThrottles
-} = bedrockThrottleSlice.actions;
+export const { setThrottled, clearThrottle, clearExpiredThrottles } =
+  bedrockThrottleSlice.actions;
 
 // Selectors
 export const selectThrottleForModel = (
@@ -95,14 +87,6 @@ export const selectThrottleForModel = (
 ): ThrottleInfo | null => {
   // Only check model-specific throttle (no global throttle)
   return state.bedrockThrottle.throttleByModel[modelId] || null;
-};
-
-export const selectIsAnyModelThrottled = (state: {
-  bedrockThrottle: BedrockThrottleState;
-}): boolean => {
-  return Object.values(state.bedrockThrottle.throttleByModel).some(
-    (throttle) => throttle.isThrottled
-  );
 };
 
 export default bedrockThrottleSlice.reducer;

@@ -8,7 +8,7 @@ import { useDisclosure } from "@heroui/modal";
 import { useState } from "react";
 
 import { CreateIcon, DeleteIcon } from "@/components/icons.tsx";
-import { ImageAdjustmentControls } from "@/components/image-adjustment-controls.tsx";
+import { ImageAdjustmentControls } from "@/components/image-adjustment/image-adjustment-controls.tsx";
 import { CreateViewpointModal } from "@/components/modals/create-viewpoint-modal.tsx";
 import { DeleteConfirmationModal } from "@/components/modals/delete-confirmation-modal.tsx";
 import { useAppDispatch, useAppSelector } from "@/store/hooks.ts";
@@ -23,7 +23,8 @@ import {
   saveViewpointAdjustments,
   setSelectedViewpoint
 } from "@/store/slices/image-viewer-slice.ts";
-import { CreateViewpointForm, LoadingStatus } from "@/store/types.ts";
+import { LoadingStatus } from "@/types/loading-status";
+import { CreateViewpointForm } from "@/types/viewpoint";
 
 export const ImageViewerSidebar = () => {
   const { isOpen, onOpen, onOpenChange } = useDisclosure();

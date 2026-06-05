@@ -17,7 +17,7 @@ import { Slider } from "@heroui/slider";
 import { Spinner } from "@heroui/spinner";
 import { useEffect, useState } from "react";
 
-import { S3Selector } from "@/components/s3-selector.tsx";
+import { S3Selector } from "@/components/common/s3-selector.tsx";
 import {
   DEFAULT_IOU_THRESHOLD,
   DEFAULT_MODEL_TYPE,
@@ -38,11 +38,11 @@ import {
 import { s3Service } from "@/services/s3-service.ts";
 import { useAppDispatch, useAppSelector } from "@/store/hooks.ts";
 import { DEFAULT_RESULT_STYLE } from "@/store/slices/jobs-slice.ts";
+import { S3Bucket } from "@/store/slices/s3-slice";
 import {
   fetchSageMakerEndpoints,
   setSelectedEndpoint
 } from "@/store/slices/sagemaker-endpoint-slice.ts";
-import { S3Bucket } from "@/store/types.ts";
 import { CLASSIFICATION_PALETTE } from "@/utils/analytics/types";
 
 interface CreateJobModalProps {

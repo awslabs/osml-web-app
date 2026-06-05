@@ -3,16 +3,11 @@
  * Tests for McpServerManagement component.
  */
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 
 import { McpServerManagement } from "@/components/mcp/mcp-server-management";
 
-// Mock the mcp-slice selectors used internally
-jest.mock("@/store/slices/mcp-slice", () => ({
-  ...jest.requireActual("@/store/slices/mcp-slice"),
-  selectMcpTools: () => [],
-  selectMcpToolToServerMap: () => new Map()
-}));
+import { renderWithStore } from "../../test-utils";
 
 const defaultProps = {
   servers: [],
@@ -24,12 +19,12 @@ const defaultProps = {
 
 describe("McpServerManagement", () => {
   it("should show empty state when no servers", () => {
-    render(<McpServerManagement {...defaultProps} />);
+    renderWithStore(<McpServerManagement {...defaultProps} />);
     expect(screen.getByText(/No MCP servers configured/)).toBeInTheDocument();
   });
 
   it("should show Add MCP Server button", () => {
-    render(<McpServerManagement {...defaultProps} />);
+    renderWithStore(<McpServerManagement {...defaultProps} />);
     expect(
       screen.getByRole("button", { name: /add mcp server/i })
     ).toBeInTheDocument();
@@ -48,7 +43,7 @@ describe("McpServerManagement", () => {
         disabledTools: [] as string[]
       }
     ];
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={servers}
@@ -71,7 +66,7 @@ describe("McpServerManagement", () => {
         disabledTools: [] as string[]
       }
     ];
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={servers}
@@ -115,7 +110,7 @@ describe("McpServerManagement - additional coverage", () => {
   const preferences = { enabledServers: servers, overrideAllApprovals: false };
 
   it("should render multiple servers", () => {
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={servers}
@@ -127,7 +122,7 @@ describe("McpServerManagement - additional coverage", () => {
   });
 
   it("should show server descriptions", () => {
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={servers}
@@ -138,7 +133,7 @@ describe("McpServerManagement - additional coverage", () => {
   });
 
   it("should show connection status indicators", () => {
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={servers}
@@ -150,13 +145,15 @@ describe("McpServerManagement - additional coverage", () => {
 
   it("should call onAddServer when Add button clicked", () => {
     const onAddServer = jest.fn();
-    render(<McpServerManagement {...defaultProps} onAddServer={onAddServer} />);
+    renderWithStore(
+      <McpServerManagement {...defaultProps} onAddServer={onAddServer} />
+    );
     fireEvent.click(screen.getByRole("button", { name: /add mcp server/i }));
     expect(onAddServer).toHaveBeenCalled();
   });
 
   it("should render with disabled server styling", () => {
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={servers}
@@ -169,7 +166,7 @@ describe("McpServerManagement - additional coverage", () => {
   it("should call onUpdateServers when delete button clicked", () => {
     const onUpdateServers = jest.fn();
     const onUpdatePreferences = jest.fn();
-    const { container } = render(
+    const { container } = renderWithStore(
       <McpServerManagement
         servers={servers}
         preferences={preferences}
@@ -193,7 +190,7 @@ describe("McpServerManagement - additional coverage", () => {
   it("should call onUpdateServers when toggle switch clicked", () => {
     const onUpdateServers = jest.fn();
     const onUpdatePreferences = jest.fn();
-    render(
+    renderWithStore(
       <McpServerManagement
         servers={servers}
         preferences={preferences}
@@ -239,7 +236,7 @@ describe("McpServerManagement - additional coverage", () => {
       overrideAllApprovals: false
     };
 
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={serversWithStatus}
@@ -269,7 +266,7 @@ describe("McpServerManagement - additional coverage", () => {
       overrideAllApprovals: false
     };
 
-    render(
+    renderWithStore(
       <McpServerManagement
         {...defaultProps}
         servers={serversWithTools}

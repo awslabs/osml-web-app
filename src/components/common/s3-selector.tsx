@@ -8,7 +8,7 @@ import {
   fetchBuckets,
   setSelectedBucket
 } from "@/store/slices/s3-slice.ts";
-import { LoadingStatus } from "@/store/types.ts";
+import { LoadingStatus } from "@/types/loading-status";
 
 interface S3SelectorProps {
   onBucketChange: (value: string) => void;

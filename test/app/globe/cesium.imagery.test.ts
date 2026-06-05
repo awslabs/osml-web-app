@@ -31,7 +31,7 @@ import overlayReducer, {
   addLayer,
   removeLayer
 } from "@/store/slices/overlay-slice";
-import { Viewpoint, ViewpointExtent } from "@/store/types";
+import { Viewpoint, ViewpointExtent } from "@/types/viewpoint";
 
 // ─── Cesium Mocks ────────────────────────────────────────────────────────────
 

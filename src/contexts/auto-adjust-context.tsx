@@ -12,7 +12,6 @@ import {
   useRef
 } from "react";
 
-import { DEFAULT_ADJUSTMENTS } from "@/store/types";
 import {
   AutoAdjustResult,
   calculateOptimalAdjustments,
@@ -21,6 +20,7 @@ import {
   MIN_PIXELS_FOR_AUTO_ADJUST,
   sampleTilePixels
 } from "@/utils/auto-adjust";
+import { DEFAULT_ADJUSTMENTS } from "@/utils/image-adjustments";
 import { adjustmentsToStyleVariables } from "@/utils/webgl";
 
 /**

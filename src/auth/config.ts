@@ -2,14 +2,6 @@
 import { AuthOptions } from "next-auth";
 import { JWT } from "next-auth/jwt";
 
-// Extend the built-in session type
-declare module "next-auth" {
-  interface Session {
-    accessToken?: string;
-    error?: string;
-  }
-}
-
 /**
  * Get the client ID lazily at runtime (not during build)
  * This allows the Next.js build to complete without the env var being set

@@ -6,7 +6,7 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ImageAdjustmentControls } from "@/components/image-adjustment-controls";
+import { ImageAdjustmentControls } from "@/components/image-adjustment/image-adjustment-controls";
 import { setSelectedViewpoint } from "@/store/slices/image-viewer-slice";
 
 // Mock the auto-adjust context
@@ -21,7 +21,7 @@ jest.mock("@/contexts/auto-adjust-context", () => ({
 }));
 
 // Mock the slider component to avoid complex HeroUI slider rendering
-jest.mock("@/components/image-adjustment-slider", () => ({
+jest.mock("@/components/image-adjustment/image-adjustment-slider", () => ({
   AdjustmentSlider: ({
     label,
     value,
@@ -47,7 +47,7 @@ jest.mock("@/services/viewpoint-service", () => ({
   viewpointService: { getViewpoints: jest.fn() }
 }));
 
-import { createTestStore, renderWithStore } from "../test-utils";
+import { createTestStore, renderWithStore } from "../../test-utils";
 
 describe("ImageAdjustmentControls", () => {
   it("should show disabled message when no viewpoint selected", () => {

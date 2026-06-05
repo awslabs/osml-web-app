@@ -35,8 +35,23 @@ import {
   setLayerStyle,
   VectorStyle
 } from "@/store/slices/jobs-slice";
+import { S3Bucket } from "@/store/slices/s3-slice";
 import type { AppDispatch } from "@/store/store";
-import { S3Bucket, viewpointToSnakeCase } from "@/store/types";
+import { CreateViewpointForm, CreateViewpointRequest } from "@/types/viewpoint";
+
+/** Convert a camelCase viewpoint form into the snake_case API request shape. */
+function viewpointToSnakeCase(
+  data: CreateViewpointForm
+): CreateViewpointRequest {
+  return {
+    viewpoint_name: data.viewpointName,
+    viewpoint_id: data.viewpointId,
+    bucket_name: data.bucketName,
+    object_key: data.objectKey,
+    tile_size: data.tileSize,
+    range_adjustment: data.rangeAdjustment
+  };
+}
 
 // ─── Public types ────────────────────────────────────────────────────────────
 

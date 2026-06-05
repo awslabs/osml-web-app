@@ -20,7 +20,6 @@ import chatSessionReducer, {
   selectChatErrors,
   selectChatHistory,
   selectChatNotifications,
-  selectChatSession,
   selectIsProcessing,
   selectLastProcessedMessageIndex,
   serializableToMessage,
@@ -251,7 +250,7 @@ describe("chat-session-slice", () => {
   describe("session lifecycle", () => {
     it("resetSession should create new session ID and clear everything", () => {
       const store = createStore();
-      const originalId = selectChatSession(store.getState()).sessionId;
+      const originalId = store.getState().chatSession.sessionId;
 
       store.dispatch(addMessage(makeMessage()));
       store.dispatch(addError("err"));
@@ -259,7 +258,7 @@ describe("chat-session-slice", () => {
 
       store.dispatch(resetSession());
 
-      const session = selectChatSession(store.getState());
+      const session = store.getState().chatSession;
       expect(session.sessionId).not.toBe(originalId);
       expect(session.history).toHaveLength(0);
       expect(session.errors).toHaveLength(0);
@@ -274,27 +273,6 @@ describe("chat-session-slice", () => {
       expect(
         store.getState().chatSession.lastUserActivity
       ).toBeGreaterThanOrEqual(before);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // selectChatSession (full session selector)
-  // -----------------------------------------------------------------------
-  describe("selectChatSession", () => {
-    it("should return a ChatSession with deserialized history and notifications", () => {
-      const store = createStore();
-      store.dispatch(addMessage(makeMessage(MessageType.HUMAN, "Hi")));
-      store.dispatch(
-        addNotification({
-          type: "error",
-          message: "oops",
-          timestamp: new Date()
-        })
-      );
-
-      const session = selectChatSession(store.getState());
-      expect(session.history[0]).toBeInstanceOf(ChatMessage);
-      expect(session.notifications[0].timestamp).toBeInstanceOf(Date);
     });
   });
 });

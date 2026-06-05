@@ -14,8 +14,8 @@ import Zoomify from "ol/source/Zoomify";
 import View from "ol/View";
 import { useEffect, useRef, useState } from "react";
 
-import { Sidebar } from "@/components/sidebar.tsx";
 import { ImageViewerSidebar } from "@/components/sidebars/image-viewer-sidebar.tsx";
+import { Sidebar } from "@/components/sidebars/sidebar.tsx";
 import { siteConfig } from "@/config/site.ts";
 import {
   AutoAdjustProvider,

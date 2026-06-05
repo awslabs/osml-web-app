@@ -2,8 +2,8 @@
 "use client";
 
 import { ChatInterface } from "@/components/chat";
-import { Sidebar } from "@/components/sidebar";
 import { GeoAgentSidebar } from "@/components/sidebars/geo-agent-sidebar";
+import { Sidebar } from "@/components/sidebars/sidebar";
 import { useAppDispatch } from "@/store/hooks";
 import { toggleDrawer } from "@/store/slices/navbar-slice";
 

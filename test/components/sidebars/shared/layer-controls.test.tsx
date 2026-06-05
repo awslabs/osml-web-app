@@ -105,19 +105,10 @@ jest.mock("@/store/slices/data-catalog-slice", () => ({
   fetchCollections: (...args: []) => mockFetchCollections(...args)
 }));
 
-// Mock jobs-slice thunks that LayerControls invokes so tests don't make real calls.
-jest.mock("@/store/slices/jobs-slice", () => {
-  const actual = jest.requireActual("@/store/slices/jobs-slice") as Record<
-    string,
-    unknown
-  >;
-  return {
-    __esModule: true,
-    ...actual,
-    startJobsPolling: () => () => {},
-    stopJobsPolling: () => () => {}
-  };
-});
+// Neutralize job-list polling so tests don't run the interval / make real calls.
+jest.mock("@/hooks/use-jobs-polling", () => ({
+  useJobsPolling: () => {}
+}));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

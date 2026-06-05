@@ -4,44 +4,6 @@
 
 import { BaseConfig, ConfigType } from "./base-config";
 
-/**
- * @deprecated Use AuthConfig from ../constructs/authorizer-function instead.
- * This class is kept for backward compatibility with existing constructs.
- */
-export class AuthConfig extends BaseConfig {
-  public authority?: string;
-  public audience?: string;
-  public clientId?: string;
-  public clientSecret?: string;
-
-  constructor(config: ConfigType = {}) {
-    super(config);
-  }
-}
-
-export class WebAppConfig extends BaseConfig {
-  public buildFromSource!: boolean;
-  public artifactLocalPath?: string;
-  public artifactUrl?: string;
-  public artifactGithubOwner?: string;
-  public artifactGithubRepo?: string;
-  public hostedZone?: string;
-  public domainName?: string;
-  public albSecurityGroupId?: string;
-  public ec2SecurityGroupId?: string;
-  public tileServerUrl?: string;
-  public stacCatalogUrl?: string;
-  public webAppUtilityUrl?: string;
-  public modelRunnerApiUrl?: string;
-  public authSuccessUrl?: string;
-  public authClientId?: string;
-  public authority?: string;
-
-  constructor(config: ConfigType = {}) {
-    super(config);
-  }
-}
-
 export class ModelRunnerApiConfig extends BaseConfig {
   public modelRunnerImageRequestQueueArn!: string;
   public modelRunnerStatusTopicArn!: string;

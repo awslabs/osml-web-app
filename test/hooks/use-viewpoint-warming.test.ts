@@ -332,3 +332,64 @@ describe("useViewpointWarming - item processing effect", () => {
     expect(result.current.readyCount).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Concurrency cap: only MAX_CONCURRENT_WARMING (4) creations run at once,
+// remaining items start as in-flight slots free up.
+// ---------------------------------------------------------------------------
+
+import { act, waitFor } from "@testing-library/react";
+
+describe("useViewpointWarming - concurrency cap", () => {
+  it("caps concurrent creations at 4 and processes the rest as slots free", async () => {
+    (hasViewableImageAsset as jest.Mock).mockReturnValue(true);
+
+    const { viewpointService } = require("@/services/viewpoint-service") as {
+      viewpointService: { createViewpoint: jest.Mock; getViewpoint: jest.Mock };
+    };
+
+    // Keep every creation pending until we explicitly resolve it so we can
+    // observe how many run concurrently.
+    const resolvers: Array<(v: unknown) => void> = [];
+    viewpointService.createViewpoint.mockImplementation(
+      () => new Promise((resolve) => resolvers.push(resolve))
+    );
+    // Polling after a creation resolves should not call createViewpoint.
+    viewpointService.getViewpoint.mockResolvedValue({
+      viewpoint_status: "READY"
+    });
+
+    const features = Array.from({ length: 6 }, (_, i) => ({
+      id: `warm-${i}`,
+      type: "Feature",
+      geometry: null,
+      properties: { datetime: null },
+      assets: { visual: { href: `s3://b/i${i}.tif`, type: "image/tiff" } }
+    }));
+
+    const store = createTestStore();
+    store.dispatch(
+      searchStacItems.fulfilled(
+        { features, context: { matched: features.length } } as never,
+        "r",
+        undefined
+      )
+    );
+
+    renderHookWithStore(() => useViewpointWarming(), { store });
+
+    // 6 eligible items, but only the cap of 4 should be in flight.
+    expect(viewpointService.createViewpoint).toHaveBeenCalledTimes(4);
+
+    // Resolving two frees two slots → the remaining two items start.
+    await act(async () => {
+      resolvers[0]({ viewpoint_id: "v0", viewpoint_status: "CREATING" });
+      resolvers[1]({ viewpoint_id: "v1", viewpoint_status: "CREATING" });
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(viewpointService.createViewpoint).toHaveBeenCalledTimes(6)
+    );
+  });
+});

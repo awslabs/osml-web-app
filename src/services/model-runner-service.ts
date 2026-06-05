@@ -71,8 +71,6 @@ export interface DeleteJobResponse {
 }
 
 class ModelRunnerService {
-  private retryCount: number = 3;
-
   async createImageProcessingJob(
     jobRequest: CreateJobRequest
   ): Promise<ImageProcessingJob> {
@@ -116,38 +114,6 @@ class ModelRunnerService {
           : "Failed to get image processing job";
       throw new Error(message);
     }
-  }
-
-  // Helper method to poll job status
-  async pollJobStatus(
-    jobId: string,
-    intervalMs: number = 5000,
-    timeoutMs: number = 300000
-  ): Promise<ImageProcessingJob> {
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < timeoutMs) {
-      const job = await this.getImageProcessingJob(jobId);
-
-      if (job.status === "COMPLETED" || job.status === "FAILED") {
-        return job;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
-
-    throw new Error("Job polling timed out");
-  }
-
-  // Utility method to create and wait for job completion
-  async processImageAndWait(
-    jobRequest: CreateJobRequest,
-    pollIntervalMs?: number,
-    timeoutMs?: number
-  ): Promise<ImageProcessingJob> {
-    const job = await this.createImageProcessingJob(jobRequest);
-
-    return this.pollJobStatus(job.job_id, pollIntervalMs, timeoutMs);
   }
 
   async deleteImageProcessingJob(jobId: string): Promise<DeleteJobResponse> {

@@ -2,16 +2,44 @@
 import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import { viewpointService } from "@/services/viewpoint-service.ts";
+import { LoadingStatus } from "@/types/loading-status";
 import {
-  clampAdjustment,
   CreateViewpointForm,
   CreateViewpointRequest,
+  SelectedViewpoint,
+  Viewpoint,
+  ViewpointBounds,
+  ViewpointInfo,
+  ViewpointMetadata,
+  ViewpointStatistics
+} from "@/types/viewpoint";
+import {
+  clampAdjustment,
   DEFAULT_ADJUSTMENTS,
-  ImageAdjustments,
-  ImageViewerState,
-  LoadingStatus,
-  SelectedViewpoint
-} from "@/store/types.ts";
+  ImageAdjustments
+} from "@/utils/image-adjustments";
+
+export interface ImageViewerState {
+  selectedViewpoint: SelectedViewpoint | null;
+  viewpointsStatus: LoadingStatus;
+  viewpointsError: string | null;
+  viewpoints: Viewpoint[];
+  viewpointBoundsStatus: LoadingStatus;
+  viewpointBoundsError: string | null;
+  viewpointBounds: ViewpointBounds;
+  viewpointMetadataStatus: LoadingStatus;
+  viewpointMetadataError: string | null;
+  viewpointMetadata: ViewpointMetadata;
+  viewpointInfoStatus: LoadingStatus;
+  viewpointInfoError: string | null;
+  viewpointInfo: ViewpointInfo;
+  viewpointStatisticsStatus: LoadingStatus;
+  viewpointStatisticsError: string | null;
+  viewpointStatistics: ViewpointStatistics;
+  // Image adjustment state
+  currentAdjustments: ImageAdjustments;
+  adjustmentsByViewpoint: Record<string, ImageAdjustments>;
+}
 
 // Action payload types
 export interface SetAdjustmentPayload {

@@ -1,5 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
-import { S3Bucket, S3Object } from "@/store/types.ts";
+import { S3Bucket, S3Object } from "@/store/slices/s3-slice";
 import { utilityApiClient } from "@/utils/api-client";
 
 export interface GetBucketsResponse {
@@ -16,8 +16,6 @@ export interface GetPresignedUrlResponse {
 }
 
 class S3Service {
-  private retryCount: number = 3;
-
   async getBuckets(): Promise<S3Bucket[]> {
     try {
       const data: GetBucketsResponse =

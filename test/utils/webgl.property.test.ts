@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates.
 import * as fc from "fast-check";
 
-import { ImageAdjustments } from "@/store/types";
+import { ImageAdjustments } from "@/utils/image-adjustments";
 import {
   adjustmentsToStyleVariables,
   WebGLStyleVariables

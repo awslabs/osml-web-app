@@ -1,5 +1,5 @@
 // Copyright Amazon.com, Inc. or its affiliates.
-import { McpServerConfig } from "@/hooks/use-mcp";
+import { McpServerConfig } from "@/types/mcp";
 
 interface DefaultMcpServerEnvEntry {
   id: string;

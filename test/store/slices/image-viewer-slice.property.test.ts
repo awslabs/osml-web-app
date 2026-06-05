@@ -8,7 +8,10 @@ import imageViewerReducer, {
   saveViewpointAdjustments,
   setSelectedViewpoint
 } from "@/store/slices/image-viewer-slice";
-import { DEFAULT_ADJUSTMENTS, ImageAdjustments } from "@/store/types";
+import {
+  DEFAULT_ADJUSTMENTS,
+  ImageAdjustments
+} from "@/utils/image-adjustments";
 
 // Arbitrary generators for valid adjustment values
 const exposureArb = fc.double({ min: -1, max: 1, noNaN: true });

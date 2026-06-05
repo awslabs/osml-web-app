@@ -31,7 +31,7 @@ jest.mock("@/contexts/auto-adjust-context", () => ({
     clearBaselineHistogram: jest.fn()
   })
 }));
-jest.mock("@/components/image-adjustment-slider", () => ({
+jest.mock("@/components/image-adjustment/image-adjustment-slider", () => ({
   AdjustmentSlider: ({ label }: { label: string }) => <div>{label}</div>
 }));
 

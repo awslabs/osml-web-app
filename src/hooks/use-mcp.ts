@@ -11,33 +11,15 @@ import type { Tool, UseMcpResult } from "use-mcp/react";
 import { useMcp } from "use-mcp/react";
 
 import { useLocalMcpServer } from "@/hooks/use-local-mcp-server";
+import { updateServerLiveState } from "@/store/slices/mcp-slice";
+import type { McpAuthMode, McpPreferences, McpServerConfig } from "@/types/mcp";
 import {
   cleanupMcpAuthInterceptor,
   initMcpAuthInterceptor,
   updateMcpServerUrls
 } from "@/utils/mcp-auth-interceptor";
 
-export type McpAuthMode = "none" | "session" | "custom";
-
-export interface McpServerConfig {
-  id: string;
-  name: string;
-  url: string;
-  description?: string;
-  enabled: boolean;
-  connectionStatus: "active" | "failed" | "connecting";
-  autoApprovedTools: string[];
-  disabledTools: string[];
-  /** How outbound requests to this server should be authenticated. Treat missing as "none". */
-  authMode?: McpAuthMode;
-  liveConnectionState?: string;
-  toolCount?: number;
-}
-
-export interface McpPreferences {
-  enabledServers: McpServerConfig[];
-  overrideAllApprovals: boolean;
-}
+export type { McpAuthMode, McpPreferences, McpServerConfig };
 
 // Individual MCP Connection Component - Exact copy of LISA's pattern
 export const McpConnection = ({
@@ -211,9 +193,6 @@ export const useMultipleMcp = (
         typeof dispatchRef.current === "function" &&
         filteredTools.length > 0
       ) {
-        const { updateServerLiveState } =
-          require("@/store/slices/mcp-slice") as typeof import("@/store/slices/mcp-slice");
-
         dispatchRef.current(
           updateServerLiveState({
             serverName: clientName,

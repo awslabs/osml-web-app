@@ -6,7 +6,7 @@
 
 import { screen } from "@testing-library/react";
 
-import { S3Selector } from "@/components/s3-selector";
+import { S3Selector } from "@/components/common/s3-selector";
 import { fetchBuckets } from "@/store/slices/s3-slice";
 
 // Mock s3Service to return resolved values (prevents useEffect crash)
@@ -17,7 +17,7 @@ jest.mock("@/services/s3-service", () => ({
   }
 }));
 
-import { createTestStore, renderWithStore } from "../test-utils";
+import { createTestStore, renderWithStore } from "../../test-utils";
 
 describe("S3Selector", () => {
   it("should render bucket and object selects", () => {

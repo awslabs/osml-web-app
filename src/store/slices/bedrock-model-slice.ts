@@ -75,14 +75,6 @@ const bedrockModelSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
-    setConnectionStatus: (
-      state,
-      action: PayloadAction<
-        "disconnected" | "connecting" | "connected" | "failed"
-      >
-    ) => {
-      state.connectionStatus = action.payload;
-    },
     clearModels: (state) => {
       state.availableModels = [];
       state.selectedModel = null;
@@ -90,15 +82,6 @@ const bedrockModelSlice = createSlice({
       state.error = null;
       state.isLoading = false;
       state.connectionStatus = "disconnected";
-    },
-    /**
-     * Seed `selectedModel` from `availableModels[0]` when nothing is
-     * selected. Does not consult the user preference; that path runs
-     * through `fetchAvailableModels.fulfilled`.
-     */
-    setDefaultModel: (state) => {
-      if (state.selectedModel) return;
-      state.selectedModel = selectDefaultBedrockModel(state.availableModels);
     }
   },
   extraReducers: (builder) => {
@@ -129,12 +112,7 @@ const bedrockModelSlice = createSlice({
   }
 });
 
-export const {
-  setSelectedModel,
-  clearError,
-  clearModels,
-  setDefaultModel,
-  setConnectionStatus
-} = bedrockModelSlice.actions;
+export const { setSelectedModel, clearError, clearModels } =
+  bedrockModelSlice.actions;
 
 export default bedrockModelSlice.reducer;
