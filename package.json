@@ -94,7 +94,7 @@
   "@typescript-eslint/parser": "^8.39.0",
   "babel-plugin-react-compiler": "^1.0.0",
   "copy-webpack-plugin": "^14.0.0",
-  "cypress": "^15.7.1",
+  "cypress": "^15.16.0",
   "eslint": "^9.32.0",
   "eslint-config-next": "^16.0.7",
   "eslint-config-prettier": "^10.1.8",
