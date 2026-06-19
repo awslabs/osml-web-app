@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "job_id": "job-aaa-111",
+      "job_name": "Cypress Test Job A",
+      "status": "SUCCESS",
+      "image_status": "SUCCESS",
+      "updated_at": "2026-06-09T12:00:00Z",
+      "output_bucket": "mr-bucket-sink-000000000000"
+    }
+  ]
+}

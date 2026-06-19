@@ -11,7 +11,8 @@
 import type { OverlayLayer } from "@/store/slices/overlay-slice";
 import {
   computeLoadedDetectionJobIds,
-  diffNewlyLoaded
+  diffNewlyLoaded,
+  pickAutoZoomFeatureId
 } from "@/utils/auto-zoom";
 
 function makeDetectionLayer(
@@ -251,5 +252,49 @@ describe("first-toggle auto-zoom scenario", () => {
     const loadedShown = computeLoadedDetectionJobIds(shownLayers);
     const newlyShown = diffNewlyLoaded(loadedShown, prev);
     expect(newlyShown).toEqual(new Set(["job-1"]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pickAutoZoomFeatureId — shared decision for agent/STAC feature auto-zoom.
+// Both the map (OpenLayers fit) and globe (Cesium flyTo) must use this so the
+// two views auto-zoom plotted STAC/agent features identically.
+// ---------------------------------------------------------------------------
+
+describe("pickAutoZoomFeatureId", () => {
+  it("returns null when auto-zoom is disabled, even with new features", () => {
+    const result = pickAutoZoomFeatureId([{ id: "a" }], new Set(), false);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when there are no newly-added features", () => {
+    const result = pickAutoZoomFeatureId(
+      [{ id: "a" }, { id: "b" }],
+      new Set(["a", "b"]),
+      true
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns the single newly-added feature id", () => {
+    const result = pickAutoZoomFeatureId(
+      [{ id: "a" }, { id: "b" }],
+      new Set(["a"]),
+      true
+    );
+    expect(result).toBe("b");
+  });
+
+  it("returns the LAST newly-added feature when several appear at once", () => {
+    const result = pickAutoZoomFeatureId(
+      [{ id: "a" }, { id: "b" }, { id: "c" }],
+      new Set(["a"]),
+      true
+    );
+    expect(result).toBe("c");
+  });
+
+  it("returns null for an empty feature list", () => {
+    expect(pickAutoZoomFeatureId([], new Set(), true)).toBeNull();
   });
 });

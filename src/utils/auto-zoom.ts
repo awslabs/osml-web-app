@@ -60,3 +60,32 @@ export function diffNewlyLoaded(
   });
   return added;
 }
+
+/** Minimal shape of an agent-drawn / STAC inline feature for auto-zoom. */
+export interface AutoZoomFeature {
+  id: string;
+}
+
+/**
+ * Decide which agent/STAC feature the view should auto-zoom to, given the
+ * current features, the set already zoomed to on previous renders, and whether
+ * the auto-zoom preference is enabled.
+ *
+ * Returns the id of the last newly-present feature to zoom to, or `null` when
+ * auto-zoom is disabled or nothing is newly present. The map and globe share
+ * this decision so they zoom identically; the camera move and updating the
+ * "previous" set are the caller's responsibility.
+ */
+export function pickAutoZoomFeatureId(
+  features: ReadonlyArray<AutoZoomFeature>,
+  previousIds: ReadonlySet<string>,
+  autoZoomEnabled: boolean
+): string | null {
+  if (!autoZoomEnabled) return null;
+  const newlyAdded: string[] = [];
+  for (const f of features) {
+    if (!previousIds.has(f.id)) newlyAdded.push(f.id);
+  }
+  if (newlyAdded.length === 0) return null;
+  return newlyAdded[newlyAdded.length - 1];
+}

@@ -178,6 +178,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - `npm test` - Run unit tests
 - `npm run test:watch` - Run tests in watch mode
 - `npm run test:coverage` - Generate coverage report
+- `npm run e2e` - Run the Cypress end-to-end suite headless (starts the dev server, runs the tests, and shuts it down)
+- `npm run e2e:open` - Open the Cypress interactive runner (starts the dev server first)
+- `npm run ash` - Run the ASH security scan locally using `.ash/ash.yaml`
 
 ### State Management
 
@@ -289,6 +292,20 @@ Server-only secrets (`NEXTAUTH_SECRET`, `OIDC_AUTHORITY`) are read directly by t
 npm test                    # Run all tests
 npm run test:watch         # Watch mode
 npm run test:coverage      # With coverage report
+```
+
+### End-to-End Tests (Cypress)
+The Cypress suite drives the running app and mocks the backend services, so no
+deployed environment is required. Both commands start the dev server, run the
+tests, and shut the server down automatically.
+```bash
+npm run e2e                 # Headless run (used in CI)
+npm run e2e:open           # Interactive runner
+```
+
+### Security Scanning (ASH)
+```bash
+npm run ash                 # Run the ASH scan locally using .ash/ash.yaml
 ```
 
 ### Backend Tests
