@@ -164,6 +164,7 @@ export const McpServerManagement: React.FC<McpServerManagementProps> = ({
                     placement="left"
                   >
                     <Switch
+                      aria-label={`Toggle server ${server.name}`}
                       isSelected={isEnabled}
                       size="sm"
                       onValueChange={(enabled) =>
@@ -243,6 +244,7 @@ export const McpServerManagement: React.FC<McpServerManagementProps> = ({
                   <Tooltip color="danger" content="Delete server">
                     <Button
                       isIconOnly
+                      aria-label={`Delete server ${server.name}`}
                       color="danger"
                       size="sm"
                       variant="light"

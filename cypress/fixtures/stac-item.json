@@ -1,0 +1,25 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "id": "test-1",
+  "collection": "airports",
+  "bbox": [2.34, 48.85, 2.36, 48.87],
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [2.34, 48.85],
+        [2.36, 48.85],
+        [2.36, 48.87],
+        [2.34, 48.87],
+        [2.34, 48.85]
+      ]
+    ]
+  },
+  "properties": {
+    "datetime": "2026-01-01T00:00:00Z",
+    "title": "Cypress STAC Test Item"
+  },
+  "links": [],
+  "assets": {}
+}

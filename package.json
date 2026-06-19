@@ -13,6 +13,8 @@
   "test:coverage": "jest --coverage",
   "cypress:open": "cypress open",
   "cypress:run": "cypress run",
+  "e2e": "start-server-and-test dev http-get://localhost:3000 cypress:run",
+  "e2e:open": "start-server-and-test dev http-get://localhost:3000 cypress:open",
   "postinstall": "symlink-dir node_modules/cesium/Build/Cesium public/cesium",
   "ash": "ash --mode local --config .ash/ash.yaml --no-fail-on-findings"
  },
@@ -72,7 +74,7 @@
   "resium": "1.19.2",
   "tailwindcss": "^4.1.12",
   "use-mcp": "^0.0.21",
-  "uuid": "^11.1.0"
+  "uuid": "^14.0.0"
  },
  "devDependencies": {
   "@babel/plugin-transform-modules-commonjs": "^7.28.6",
@@ -117,6 +119,7 @@
   "postcss": "^8.5.6",
   "prettier": "^3.6.2",
   "stac-ts": "^1.0.5",
+  "start-server-and-test": "^3.0.11",
   "symlink-dir": "^6.0.5",
   "tailwind-variants": "^2.1.0",
   "ts-jest": "^29.4.6",

@@ -68,6 +68,74 @@ jobs:
       - name: Build
         run: npm run build
 
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The Cypress harness mints a NextAuth session cookie (cy.loginBypass) and
+      # stubs all backend services, so no real service URLs or OIDC provider are
+      # needed. These let NextAuth initialise without erroring; none is a real
+      # secret. NEXTAUTH_SECRET is generated at runtime below (not hardcoded) so
+      # no secret literal lives in source.
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_CLIENT_ID: osml-client
+      OIDC_AUTHORITY: https://keycloak.example.com/realms/osml
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      # The session-cookie signing key only needs to be consistent within this
+      # one job run (the dev server and the Cypress Node task both read it from
+      # the job env). Generate a throwaway value rather than committing a literal.
+      - name: Generate throwaway NEXTAUTH_SECRET for the test session
+        run: echo "NEXTAUTH_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+      # Runs against `next dev` (not `next start`): the test-only window hooks
+      # (__OSML_STORE__, __OSML_GLOBE_VIEWER__, __OSML_MAP_INSTANCE__) are gated
+      # on NODE_ENV !== 'production', so a production build would strip them.
+      - name: Cypress run
+        uses: cypress-io/github-action@v7
+        with:
+          install-command: npm ci
+          start: npm run dev
+          wait-on: 'http://localhost:3000'
+          wait-on-timeout: 120
+          browser: electron
+      - name: Upload Cypress videos
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cypress-videos
+          path: cypress/videos
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload Cypress screenshots
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+          retention-days: 7
+          if-no-files-found: ignore
+      # On failure, list which tests produced screenshots inline on the Summary
+      # tab. The run's Artifacts panel already links the screenshot/video zips,
+      # but not which specific tests failed — that per-test list is the value here.
+      - name: Publish Cypress failure summary
+        if: failure()
+        run: |
+          if [ -d cypress/screenshots ] && [ -n "$(ls -A cypress/screenshots 2>/dev/null)" ]; then
+            {
+              echo "## Cypress failure screenshots (point of failure)"
+              echo ""
+              # One bullet per screenshot; Cypress names them after the failing test.
+              find cypress/screenshots -name '*.png' | sort | sed 's|cypress/screenshots/||; s|^|- |'
+              echo ""
+              echo "Download the screenshots and per-spec videos from the Artifacts section of this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   security-scan:
     runs-on: ubuntu-latest
     needs: quality-checks
