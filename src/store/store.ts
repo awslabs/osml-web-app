@@ -84,6 +84,13 @@ export const store = configureStore({
 
 export const persistor = persistStore(store);
 
+// Test-only: expose the store on window so Cypress e2e specs can read state and
+// dispatch actions. Gated out of production builds so it is never shipped.
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as { __OSML_STORE__: typeof store }).__OSML_STORE__ =
+    store;
+}
+
 export type RootState = ReturnType<typeof rootReducer>;
 export type AppDispatch = typeof store.dispatch;
 export default store;

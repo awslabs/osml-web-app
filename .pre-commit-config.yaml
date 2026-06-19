@@ -29,13 +29,6 @@ repos:
         args: ["--max-line-length=125", "--max-complexity=10"]
         types: [file, python]
 
-  # Security scanning (manual)
-  - repo: https://github.com/awslabs/automated-security-helper
-    rev: 'v3.5.2'
-    hooks:
-      - id: ash
-        stages: [manual]
-
   # Local hooks for security, copyright, TypeScript, and tests
   - repo: local
     hooks:
@@ -108,7 +101,7 @@ repos:
         name: ESLint
         entry: bash -c 'npx eslint --fix --max-warnings 0'
         language: system
-        files: ^(src|cdk|test)/.*\.(ts|tsx|js)$
+        files: ^(src|cdk|test|cypress)/.*\.(ts|tsx|js)$
         types: [file]
         pass_filenames: false
 

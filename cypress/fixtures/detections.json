@@ -1,0 +1,45 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "det-1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-77.041, 38.905],
+            [-77.039, 38.905],
+            [-77.039, 38.907],
+            [-77.041, 38.907],
+            [-77.041, 38.905]
+          ]
+        ]
+      },
+      "properties": {
+        "confidence": 0.91,
+        "featureClasses": [{ "iri": "aircraft", "score": 0.91 }]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "det-2",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-77.037, 38.903],
+            [-77.035, 38.903],
+            [-77.035, 38.905],
+            [-77.037, 38.905],
+            [-77.037, 38.903]
+          ]
+        ]
+      },
+      "properties": {
+        "confidence": 0.62,
+        "featureClasses": [{ "iri": "vehicle", "score": 0.62 }]
+      }
+    }
+  ]
+}

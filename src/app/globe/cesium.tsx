@@ -28,8 +28,12 @@ import { dataCatalogService } from "@/services/data-catalog-service";
 import { useAppDispatch, useAppSelector } from "@/store/hooks.ts";
 import type { FeatureStyle } from "@/store/slices/overlay-slice.ts";
 import { selectFeature } from "@/store/slices/overlay-slice.ts";
-import { selectGlobeSettings } from "@/store/slices/settings-slice.ts";
+import {
+  selectAutoZoom,
+  selectGlobeSettings
+} from "@/store/slices/settings-slice.ts";
 import { setViewport } from "@/store/slices/viewport-slice.ts";
+import { pickAutoZoomFeatureId } from "@/utils/auto-zoom.ts";
 import {
   calculateZoomFromExtent,
   cartesian3ToWGS84,
@@ -130,6 +134,9 @@ export default function Cesium() {
   const [popupData, setPopupData] = useState<GlobeFeaturePopupData | null>(
     null
   );
+  // Agent/STAC feature ids already auto-zoomed to, so the camera flies only to
+  // newly-added features.
+  const prevAgentFeatureIdsRef = useRef<Set<string>>(new Set());
 
   const dispatch = useAppDispatch();
   const viewport = useAppSelector((state) => state.viewport);
@@ -138,6 +145,7 @@ export default function Cesium() {
   );
   const features = inlineAgentFeatures ?? emptyFeatures;
   const globeSettings = useAppSelector(selectGlobeSettings);
+  const autoZoom = useAppSelector(selectAutoZoom);
 
   // Render imagery tiles and detection layers for selected jobs on the globe.
   // Detection layers are reconciled (diff-based) so GeoJSON is not re-parsed
@@ -318,6 +326,17 @@ export default function Cesium() {
       (f) => f.properties.dataSource !== "stac_url"
     );
 
+    // Decide which newly-added feature (if any) to auto-zoom to, then record
+    // the current ids so we don't re-zoom on later renders. Flying the camera
+    // triggers the camera.changed listener above, which writes the shared
+    // viewport (updatedBy "globe") — keeping map and globe consistent.
+    const zoomTargetId = pickAutoZoomFeatureId(
+      features,
+      prevAgentFeatureIdsRef.current,
+      autoZoom
+    );
+    prevAgentFeatureIdsRef.current = new Set(features.map((f) => f.id));
+
     // Process STAC URL features through authenticated service
     stacFeatures.forEach(async (feature) => {
       try {
@@ -354,6 +373,11 @@ export default function Cesium() {
               );
               applyEntityStyling(entity, feature.properties.style || {});
             });
+
+            // Auto-zoom to this feature if it's the newly-added one.
+            if (feature.id === zoomTargetId && !viewer.isDestroyed?.()) {
+              void viewer.flyTo(stacDataSource, { duration: 1.5 });
+            }
           } catch {
             // STAC item loading failed silently
           }
@@ -383,6 +407,12 @@ export default function Cesium() {
           entity.name = feature.id;
           applyEntityStyling(entity, feature.properties.style || {});
         });
+
+        // Auto-zoom if the newly-added feature is a direct (non-STAC) one.
+        const directZoom = directFeatures.some((f) => f.id === zoomTargetId);
+        if (directZoom && !viewer.isDestroyed?.()) {
+          void viewer.flyTo(geoJsonDataSource, { duration: 1.5 });
+        }
       });
 
       viewer.dataSources.add(geoJsonDataSource);
@@ -444,7 +474,7 @@ export default function Cesium() {
         );
       }
     };
-  }, [features, viewerReady, dispatch]);
+  }, [features, viewerReady, dispatch, autoZoom]);
 
   if (!viewerConfig) {
     return <div>Loading Globe...</div>;
@@ -457,6 +487,13 @@ export default function Cesium() {
           if (viewer?.cesiumElement) {
             viewerRef.current = viewer.cesiumElement;
             setViewerReady(true);
+            // Test-only: expose the Cesium viewer so Cypress e2e specs can read
+            // the real camera back. Gated out of production builds.
+            if (process.env.NODE_ENV !== "production") {
+              (
+                window as unknown as { __OSML_GLOBE_VIEWER__: unknown }
+              ).__OSML_GLOBE_VIEWER__ = viewer.cesiumElement;
+            }
           }
         }}
         infoBox={false}

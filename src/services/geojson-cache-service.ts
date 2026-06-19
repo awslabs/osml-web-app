@@ -46,6 +46,16 @@ export class GeoJSONCacheService {
   static getInstance(): GeoJSONCacheService {
     if (!GeoJSONCacheService.instance) {
       GeoJSONCacheService.instance = new GeoJSONCacheService();
+      // Test-only: expose the cache so Cypress e2e specs can seed detection
+      // GeoJSON without a live backend. Gated out of production builds.
+      if (
+        typeof window !== "undefined" &&
+        process.env.NODE_ENV !== "production"
+      ) {
+        (
+          window as unknown as { __OSML_GEOJSON_CACHE__: GeoJSONCacheService }
+        ).__OSML_GEOJSON_CACHE__ = GeoJSONCacheService.instance;
+      }
     }
     return GeoJSONCacheService.instance;
   }
