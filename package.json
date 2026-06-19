@@ -74,7 +74,7 @@
   "resium": "1.19.2",
   "tailwindcss": "^4.1.12",
   "use-mcp": "^0.0.21",
-  "uuid": "^11.1.0"
+  "uuid": "^14.0.0"
  },
  "devDependencies": {
   "@babel/plugin-transform-modules-commonjs": "^7.28.6",
