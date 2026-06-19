@@ -289,10 +289,22 @@ export default function MapViewer() {
 
     mapInstance.current.on("moveend", handleMoveEnd);
 
+    // Test-only: expose the OpenLayers map so Cypress e2e specs can read the
+    // real view (center/zoom) back. Gated out of production builds.
+    if (process.env.NODE_ENV !== "production") {
+      (
+        window as unknown as { __OSML_MAP_INSTANCE__: unknown }
+      ).__OSML_MAP_INSTANCE__ = mapInstance.current;
+    }
+
     return () => {
       if (moveTimeout) clearTimeout(moveTimeout);
       mapInstance.current?.setTarget(undefined);
       mapInstance.current = null;
+      if (process.env.NODE_ENV !== "production") {
+        delete (window as unknown as { __OSML_MAP_INSTANCE__?: unknown })
+          .__OSML_MAP_INSTANCE__;
+      }
     };
   }, [dispatch]);
 
