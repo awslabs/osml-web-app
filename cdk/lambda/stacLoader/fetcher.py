@@ -13,9 +13,25 @@ from urllib.parse import urljoin
 import boto3
 import httpx
 from botocore.exceptions import ClientError
-from pystac import Collection, Item
+from pystac import Collection, Item, StacIO
+from url_guard import GuardedAsyncTransport, UnsafeURLError, validate_url
 
 logger = logging.getLogger(__name__)
+
+
+class _NoNetworkStacIO(StacIO):
+    """StacIO that refuses I/O, so pystac cannot resolve links out of band."""
+
+    def read_text(self, source, *args, **kwargs) -> str:
+        raise UnsafeURLError(f"pystac I/O is disabled; refusing to read {source}")
+
+    def write_text(self, dest, txt: str, *args, **kwargs) -> None:
+        raise UnsafeURLError(f"pystac I/O is disabled; refusing to write {dest}")
+
+
+# Every fetch in this module goes through the validated HTTP path below. pystac
+# resolves links with its own urllib-based I/O, which would bypass that path.
+StacIO.set_default(_NoNetworkStacIO)
 
 
 class AssetFetchMode(str, Enum):
@@ -37,6 +53,9 @@ _IMAGE_MIME_PREFIXES = ("image/",)
 # File extension to type mapping
 _TEXT_EXTENSIONS = frozenset({".txt", ".json", ".xml", ".geojson"})
 _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff"})
+
+# Collection link rels that fetch_collection walks to enumerate items.
+_ENUMERATED_LINK_RELS = frozenset({"item", "items"})
 
 
 def classify_mime_type(mime_type: str) -> str:
@@ -137,10 +156,15 @@ class STACFetcher:
         if self.auth_token:
             headers["Authorization"] = f"Bearer {self.auth_token}"
 
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            limits=limits,
             headers=headers,
+            # Validates the address of each connection this client opens.
+            transport=GuardedAsyncTransport(limits=limits),
+            # A redirect target would not go through destination validation.
+            follow_redirects=False,
         )
 
     async def close(self) -> None:
@@ -216,6 +240,11 @@ class STACFetcher:
         response = await self._fetch_with_retry(url)
         try:
             collection_dict = response.json()
+            # Keep only the rels this method enumerates. Item hrefs are resolved
+            # against the collection URL below, so no other link is needed.
+            collection_dict["links"] = [
+                link for link in collection_dict.get("links", []) if link.get("rel") in _ENUMERATED_LINK_RELS
+            ]
             collection = Collection.from_dict(collection_dict)
         except Exception as e:
             raise FetchError(url=url, status_code=None, message=f"Failed to parse STAC collection: {e}")
@@ -549,6 +578,58 @@ class STACFetcher:
             raise RuntimeError(f"S3 retry loop for {s3_url} exited without capturing an error")
         raise last_error
 
+    @staticmethod
+    def _refuse_unsafe(url: str, error: UnsafeURLError) -> FetchError:
+        """Convert a refused destination into a FetchError that is not retried."""
+        logger.warning(f"Refusing to fetch {url}: {error}")
+        return FetchError(url=url, status_code=None, message=str(error))
+
+    @staticmethod
+    def _request_error(url: str, error: httpx.RequestError) -> FetchError:
+        """Convert a transport failure into a retryable FetchError."""
+        if isinstance(error, httpx.TimeoutException):
+            return FetchError(url=url, status_code=None, message="Request timed out")
+        return FetchError(url=url, status_code=None, message=f"Request error: {error}")
+
+    async def _attempt_fetch(self, url: str) -> tuple[Optional[httpx.Response], Optional[FetchError]]:
+        """
+        Make a single fetch attempt.
+
+        Args:
+            url: The URL to fetch
+
+        Returns:
+            (response, None) on success, or (None, error) when a retry may succeed
+
+        Raises:
+            FetchError: If the failure is not worth retrying
+        """
+        try:
+            response = await self._client.get(url)
+
+            if response.status_code < 400:
+                return response, None
+
+            if response.status_code < 500:
+                raise FetchError(
+                    url=url,
+                    status_code=response.status_code,
+                    message=f"Client error: HTTP {response.status_code}",
+                )
+
+            return None, FetchError(
+                url=url,
+                status_code=response.status_code,
+                message=f"Server error: HTTP {response.status_code}",
+            )
+        except FetchError:
+            raise
+        except UnsafeURLError as e:
+            # The address was refused at connect time; retrying cannot help.
+            raise self._refuse_unsafe(url, e)
+        except httpx.RequestError as e:
+            return None, self._request_error(url, e)
+
     async def _fetch_with_retry(self, url: str) -> httpx.Response:
         """
         Fetch a URL with exponential backoff retry for timeouts and 5xx errors.
@@ -563,53 +644,30 @@ class STACFetcher:
             httpx.Response on success
 
         Raises:
-            FetchError: If all retries are exhausted or a non-retryable error occurs
+            FetchError: If the destination is not permitted, all retries are
+                exhausted, or a non-retryable error occurs
         """
-        last_error: Optional[Exception] = None
+        # Checked ahead of the loop so a malformed or non-HTTP URL is not retried.
+        # The destination address is validated separately, inside each connection.
+        try:
+            validate_url(url)
+        except UnsafeURLError as e:
+            raise self._refuse_unsafe(url, e)
+
+        last_error: Optional[FetchError] = None
 
         for attempt in range(self.max_retries + 1):
-            try:
-                response = await self._client.get(url)
-
-                if response.status_code < 400:
-                    return response
-
-                if 400 <= response.status_code < 500:
-                    raise FetchError(
-                        url=url,
-                        status_code=response.status_code,
-                        message=f"Client error: HTTP {response.status_code}",
-                    )
-
-                last_error = FetchError(
-                    url=url,
-                    status_code=response.status_code,
-                    message=f"Server error: HTTP {response.status_code}",
-                )
-
-            except FetchError:
-                raise
-            except httpx.TimeoutException:
-                last_error = FetchError(
-                    url=url,
-                    status_code=None,
-                    message="Request timed out",
-                )
-            except httpx.RequestError as e:
-                last_error = FetchError(
-                    url=url,
-                    status_code=None,
-                    message=f"Request error: {e}",
-                )
+            response, last_error = await self._attempt_fetch(url)
+            if response is not None:
+                return response
 
             if attempt < self.max_retries:
                 backoff = 2**attempt
                 logger.info(f"Retrying {url} in {backoff}s (attempt {attempt + 1}/{self.max_retries})")
                 await asyncio.sleep(backoff)
 
-        # Invariant: loop body always sets last_error on failure paths before
-        # exiting, or returns on success. Reaching this point with last_error
-        # unset indicates a logic error, not a retry exhaustion.
+        # Invariant: _attempt_fetch returns a response or an error, so an unset
+        # error here indicates a logic error, not retry exhaustion.
         if last_error is None:
             raise RuntimeError(f"Retry loop for {url} exited without capturing an error")
         raise last_error

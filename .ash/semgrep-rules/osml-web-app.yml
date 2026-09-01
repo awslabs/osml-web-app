@@ -107,6 +107,59 @@ rules:
       - pattern: "console.log(..., $X.refresh_token, ...)"
       - pattern: "console.log(..., $X.clientSecret, ...)"
 
+  - id: stac-loader-http-client-must-be-guarded
+    message: |
+      STAC Loader HTTP clients must be built with url_guard.GuardedAsyncTransport,
+      which validates the address of every connection. An unguarded client reaches
+      VPC-internal services and the container credential endpoint on behalf of
+      whoever supplied the URL.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "cdk/lambda/stacLoader/**/*.py"
+      exclude:
+        - "cdk/lambda/stacLoader/.tox/**"
+        - "cdk/lambda/stacLoader/__pycache__/**"
+        - "cdk/lambda/stacLoader/htmlcov/**"
+        - "cdk/lambda/stacLoader/conda/**"
+        - "cdk/lambda/stacLoader/tests/**"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: httpx.AsyncClient(...)
+              - pattern: httpx.Client(...)
+          - pattern-not: httpx.AsyncClient(..., transport=..., ...)
+          - pattern-not: httpx.Client(..., transport=..., ...)
+      # The module-level helpers build their own unguarded client.
+      - pattern: httpx.get(...)
+      - pattern: httpx.post(...)
+      - pattern: httpx.put(...)
+      - pattern: httpx.patch(...)
+      - pattern: httpx.delete(...)
+      - pattern: httpx.request(...)
+      - pattern: httpx.stream(...)
+
+  - id: stac-loader-must-not-follow-redirects
+    message: |
+      The STAC Loader HTTP client must keep follow_redirects disabled. A redirect
+      is followed without passing through destination validation, so enabling it
+      lets a remote host steer the fetch to an internal address.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "cdk/lambda/stacLoader/**/*.py"
+      exclude:
+        - "cdk/lambda/stacLoader/.tox/**"
+        - "cdk/lambda/stacLoader/__pycache__/**"
+        - "cdk/lambda/stacLoader/htmlcov/**"
+        - "cdk/lambda/stacLoader/conda/**"
+    pattern-either:
+      - pattern: httpx.AsyncClient(..., follow_redirects=True, ...)
+      - pattern: httpx.Client(..., follow_redirects=True, ...)
+      - pattern: $CLIENT.$METHOD(..., follow_redirects=True, ...)
+
   - id: no-http-only-auth-url
     message: |
       Authentication/authority URLs must use https. Plain http:// for OIDC or

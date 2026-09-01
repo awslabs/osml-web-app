@@ -64,7 +64,9 @@ def _make_item_with_assets(asset_specs: list[tuple[str, str, str | None]]) -> It
 # Feature: stac-loader-enhancements, Property 11: Successful assets list completeness
 
 
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+# deadline disabled: under coverage instrumentation the first example runs an
+# order of magnitude slower than later ones, which hypothesis reports as flaky.
+@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 @given(
     n_assets=st.integers(min_value=1, max_value=6),
     data=st.data(),

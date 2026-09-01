@@ -177,6 +177,9 @@ global_settings:
     - rule_id: "B311"
       path: "cdk/lambda/stacLoader/tests/integration/test_stress_loading.py"
       reason: "random.sample() selects test STAC items for stress-test coverage; non-cryptographic use in a test fixture"
+    - rule_id: "B104"
+      path: "cdk/lambda/stacLoader/tests/test_url_guard.py"
+      reason: "The literal 0.0.0.0 is a parametrized fetch destination the URL guard must reject; the test asserts refusal and nothing binds to it"
 
 scanners:
   # npm-audit is disabled: npm dependency vulnerabilities are already

@@ -857,7 +857,10 @@ export class WebUIConstruct extends Construct {
       targets: [asg],
       stickinessCookieDuration: Duration.days(1),
       healthCheck: {
-        path: "/",
+        // "/" is auth-protected and 307s to the signin page, so it can never
+        // return the 200 the ALB expects; probe the unauthenticated
+        // next-auth route instead (see src/middleware.ts matcher).
+        path: "/api/auth/signin",
         unhealthyThresholdCount: 2,
         healthyThresholdCount: 5,
         interval: Duration.seconds(30)

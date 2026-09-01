@@ -24,4 +24,4 @@
  * introduced into `web-ui-construct.ts` will still trip the detector.
  */
 export const NODEJS_KEYRING_SHA256 =
-  "fa1274830f9b9c126329ae64fcd96e0e93d4b3ff12ab68ab29f886be275eb241";
+  "610b8d249da3d5733f5a128def2dd0294dbbf5b5713e6ca2529db8db419dee00";
