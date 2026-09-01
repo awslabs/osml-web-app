@@ -406,6 +406,42 @@ servers are reachable.
 allowlist. Plaintext `http://` and `ws://` are permitted only for
 `localhost` / `127.0.0.1` to support local development.
 
+### STAC Loader Fetch Destinations
+
+The STAC Data Loader fetches catalog documents and assets from URLs supplied by
+the caller, so every outbound destination is validated before a connection is
+made. Only `http` and `https` are allowed, URLs may not embed credentials, and
+redirects are not followed.
+
+Each hostname is resolved and the resulting address is checked inside the
+connection attempt, so the address that is validated is the address that is
+dialed. These are refused:
+
+- loopback (`127.0.0.0/8`, `::1`)
+- private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`)
+- link-local (`169.254.0.0/16`, including the instance metadata and ECS
+  container credential endpoints)
+- shared address space (`100.64.0.0/10`)
+- reserved, multicast, and unspecified (`0.0.0.0`)
+
+Validating after resolution is what makes this effective — `0177.0.0.1`,
+`2130706433`, and `127.1` all resolve to `127.0.0.1`, so filtering on the URL
+text alone would not catch them.
+
+#### Local development against a private catalog
+
+Set `STAC_LOADER_ALLOW_PRIVATE_HOSTS` to `true` to permit loopback, private,
+reserved, and shared-address-space destinations. Any other value — unset,
+`false`, `0`, `1`, `yes` — leaves validation fully enabled.
+
+```bash
+STAC_LOADER_ALLOW_PRIVATE_HOSTS=true python cdk/lambda/stacLoader/deployed_server.py
+```
+
+Link-local, multicast, and unspecified addresses stay refused even with the
+variable set, so the credential endpoints are never reachable. The CDK does not
+set this variable, so deployed tasks always run with validation fully enabled.
+
 ### Bedrock Models
 Available models are defined in `cdk/lambda/webAppUtility/app.py` and can be filtered at deploy time via the `bedrockModels.enabledModels` list in `deployment.json`. The app includes automatic quota tracking and rate limiting.
 
