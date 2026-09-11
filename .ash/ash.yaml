@@ -180,6 +180,12 @@ global_settings:
     - rule_id: "B104"
       path: "cdk/lambda/stacLoader/tests/test_url_guard.py"
       reason: "The literal 0.0.0.0 is a parametrized fetch destination the URL guard must reject; the test asserts refusal and nothing binds to it"
+    - rule_id: "B105"
+      path: "cdk/lambda/stacLoader/tests/test_auth_scoping.py"
+      reason: "Literal placeholder tokens ('token', 'session-token', 'caller-token') asserting bearer-token scoping; no real credential"
+    - rule_id: "B106"
+      path: "cdk/lambda/stacLoader/tests/test_auth_scoping.py"
+      reason: "Literal placeholder token passed as auth_token= in tests of bearer-token scoping; no real credential"
 
 scanners:
   # npm-audit is disabled: npm dependency vulnerabilities are already
