@@ -58,6 +58,23 @@ _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff"})
 _ENUMERATED_LINK_RELS = frozenset({"item", "items"})
 
 
+def request_origin(url: str) -> tuple[str, str, Optional[int]]:
+    """
+    Return a URL's (scheme, host, port) for origin-equality comparison.
+
+    httpx lowercases the host and normalizes default ports to None, so two
+    spellings of the same origin compare equal.
+
+    Args:
+        url: An absolute HTTP/HTTPS URL
+
+    Returns:
+        Tuple of (scheme, host, port)
+    """
+    parsed = httpx.URL(url)
+    return (parsed.scheme.lower(), (parsed.host or "").lower(), parsed.port)
+
+
 def classify_mime_type(mime_type: str) -> str:
     """
     Classify a MIME type as 'text', 'image', or 'unknown'.
@@ -145,27 +162,57 @@ class STACFetcher:
         max_retries: int = 3,
         assume_role_arn: Optional[str] = None,
         auth_token: Optional[str] = None,
+        auth_urls: Optional[list[str]] = None,
     ):
+        """
+        Args:
+            timeout: Per-request timeout in seconds
+            max_retries: Retry attempts for timeouts and 5xx responses
+            assume_role_arn: Optional IAM role to assume for S3 asset access
+            auth_token: Optional Bearer token for authenticated catalogs
+            auth_urls: URLs naming the catalogs auth_token may be sent to. The
+                token is attached only to requests whose origin (scheme, host,
+                port) matches one of these URLs, never to hosts discovered
+                inside fetched documents. Required when auth_token is set.
+
+        Raises:
+            ValueError: If auth_token is set without auth_urls
+        """
         self.timeout = timeout
         self.max_retries = max_retries
         self.assume_role_arn = assume_role_arn
         self.auth_token = auth_token
         self._s3_client = None
 
-        headers = {}
-        if self.auth_token:
-            headers["Authorization"] = f"Bearer {self.auth_token}"
+        if auth_token and not auth_urls:
+            raise ValueError("auth_token requires auth_urls naming the catalogs it may be sent to")
+
+        self._auth_origins: frozenset[tuple[str, str, Optional[int]]] = frozenset()
+        if auth_token:
+            origins = set()
+            for url in auth_urls or []:
+                try:
+                    origins.add(request_origin(url))
+                except Exception:
+                    # An unparsable URL cannot be fetched, so it needs no token.
+                    logger.warning(f"Ignoring unparsable auth URL {url}")
+            self._auth_origins = frozenset(origins)
 
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
             limits=limits,
-            headers=headers,
             # Validates the address of each connection this client opens.
             transport=GuardedAsyncTransport(limits=limits),
             # A redirect target would not go through destination validation.
             follow_redirects=False,
         )
+
+    def _auth_headers_for(self, url: str) -> Optional[dict[str, str]]:
+        """Return the Authorization header when the URL's origin is one the token is scoped to."""
+        if self.auth_token and request_origin(url) in self._auth_origins:
+            return {"Authorization": f"Bearer {self.auth_token}"}
+        return None
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -605,7 +652,7 @@ class STACFetcher:
             FetchError: If the failure is not worth retrying
         """
         try:
-            response = await self._client.get(url)
+            response = await self._client.get(url, headers=self._auth_headers_for(url))
 
             if response.status_code < 400:
                 return response, None

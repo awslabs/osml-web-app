@@ -442,6 +442,16 @@ Link-local, multicast, and unspecified addresses stay refused even with the
 variable set, so the credential endpoints are never reachable. The CDK does not
 set this variable, so deployed tasks always run with validation fully enabled.
 
+#### Bearer token scoping
+
+The loader can authenticate to catalogs in two ways: an explicit `auth_token`
+tool parameter, or passthrough of the caller's own token to the internal data
+catalog (`DATA_CATALOG_BASE_URL`). In both cases the token is attached per
+request, only when the request URL's origin — scheme, host, and port — equals
+an origin the token was scoped to: the caller-named URLs for an explicit
+token, or the internal catalog alone for passthrough. Hosts discovered inside
+fetched documents (item links, asset hrefs on other hosts) never receive it.
+
 ### Bedrock Models
 Available models are defined in `cdk/lambda/webAppUtility/app.py` and can be filtered at deploy time via the `bedrockModels.enabledModels` list in `deployment.json`. The app includes automatic quota tracking and rate limiting.
 

@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 import uvicorn
 from common.workspace import Workspace
-from fetcher import AssetFetchMode, FetchError, STACFetcher
+from fetcher import AssetFetchMode, FetchError, STACFetcher, request_origin
 from loader import STACLoader
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -154,6 +154,7 @@ async def _run_load_job_async(
     fetch_mode: AssetFetchMode,
     assume_role_arn: Optional[str],
     auth_token: Optional[str],
+    auth_urls: list[str],
     config: DataLoaderConfig,
 ) -> None:
     """Execute the STAC loading work using a dedicated httpx client.
@@ -173,6 +174,7 @@ async def _run_load_job_async(
             max_retries=config.max_retries,
             assume_role_arn=assume_role_arn,
             auth_token=auth_token,
+            auth_urls=auth_urls,
         ) as fetcher:
             for url in urls:
                 item_start = time.time()
@@ -245,11 +247,14 @@ def _run_load_job_in_thread(
     fetch_mode: AssetFetchMode,
     assume_role_arn: Optional[str],
     auth_token: Optional[str],
+    auth_urls: list[str],
     config: DataLoaderConfig,
 ) -> None:
     """Run the STAC item load job in an isolated event loop."""
     _run_in_isolated_loop(
-        _run_load_job_async(job, urls, workspace_bucket, collection, fetch_mode, assume_role_arn, auth_token, config)
+        _run_load_job_async(
+            job, urls, workspace_bucket, collection, fetch_mode, assume_role_arn, auth_token, auth_urls, config
+        )
     )
 
 
@@ -259,6 +264,7 @@ async def _run_geojson_job_async(
     workspace_bucket: str,
     output_name: str,
     auth_token: Optional[str],
+    auth_urls: list[str],
     config: DataLoaderConfig,
 ) -> None:
     """Fetch STAC items and write them as a combined GeoJSON FeatureCollection."""
@@ -270,6 +276,7 @@ async def _run_geojson_job_async(
             timeout=config.request_timeout,
             max_retries=config.max_retries,
             auth_token=auth_token,
+            auth_urls=auth_urls,
         ) as fetcher:
             for url in urls:
                 try:
@@ -333,10 +340,11 @@ def _run_geojson_job_in_thread(
     workspace_bucket: str,
     output_name: str,
     auth_token: Optional[str],
+    auth_urls: list[str],
     config: DataLoaderConfig,
 ) -> None:
     """Run the GeoJSON export job in an isolated event loop."""
-    _run_in_isolated_loop(_run_geojson_job_async(job, urls, workspace_bucket, output_name, auth_token, config))
+    _run_in_isolated_loop(_run_geojson_job_async(job, urls, workspace_bucket, output_name, auth_token, auth_urls, config))
 
 
 # ---------------------------------------------------------------------------
@@ -376,23 +384,41 @@ def _resolve_auth_token(
     auth_token: Optional[str],
     urls: list[str],
     internal_catalog_base: str,
-) -> Optional[str]:
-    """Resolve the effective auth token using the layered approach.
+) -> tuple[Optional[str], list[str]]:
+    """Resolve the effective auth token and the URLs it may be sent to.
 
     Priority:
-    1. Explicit auth_token parameter (external authenticated catalogs)
-    2. Passthrough from incoming request (internal catalog, domain-matched)
+    1. Explicit auth_token parameter (external authenticated catalogs),
+       scoped to the URLs the caller named
+    2. Passthrough from incoming request, scoped to the internal catalog only
     3. None (public catalogs)
+
+    Matching uses origin equality (scheme, host, port) rather than a string
+    prefix, so a lookalike host that merely starts with the catalog base
+    cannot receive the caller's token.
+
+    Returns:
+        Tuple of (token, urls whose origins the token is scoped to)
     """
     if auth_token is not None:
-        return auth_token
+        return auth_token, list(urls)
 
     if internal_catalog_base:
-        has_internal_url = any(url.startswith(internal_catalog_base) for url in urls)
-        if has_internal_url:
-            return _passthrough_auth_token.get()
+        try:
+            catalog_origin = request_origin(internal_catalog_base)
+        except Exception:
+            logger.warning("DATA_CATALOG_BASE_URL is not a parsable URL; token passthrough disabled")
+            return None, []
 
-    return None
+        for url in urls:
+            try:
+                url_origin = request_origin(url)
+            except Exception:
+                url_origin = None
+            if url_origin == catalog_origin:
+                return _passthrough_auth_token.get(), [internal_catalog_base]
+
+    return None, []
 
 
 def create_mcp_server(workspace_bucket: str) -> FastMCP:
@@ -403,8 +429,8 @@ def create_mcp_server(workspace_bucket: str) -> FastMCP:
     config = DataLoaderConfig()
     config.validate()
 
-    # Domain pattern for the internal data catalog — auth tokens from
-    # incoming requests are only forwarded to URLs matching this base.
+    # Internal data catalog base URL — auth tokens from incoming requests are
+    # forwarded only to URLs whose origin equals this base's origin.
     _internal_catalog_base = os.environ.get("DATA_CATALOG_BASE_URL", "")
 
     @mcp.tool()
@@ -456,7 +482,7 @@ def create_mcp_server(workspace_bucket: str) -> FastMCP:
         job = Job(job_id=job_id, items_total=len(urls))
         _jobs[job_id] = job
 
-        effective_token = _resolve_auth_token(auth_token, urls, _internal_catalog_base)
+        effective_token, auth_urls = _resolve_auth_token(auth_token, urls, _internal_catalog_base)
 
         logger.info(
             f"Job {job_id}: starting load of {len(urls)} URL(s), "
@@ -474,6 +500,7 @@ def create_mcp_server(workspace_bucket: str) -> FastMCP:
             fetch_mode,
             assume_role_arn,
             effective_token,
+            auth_urls,
             config,
         )
 
@@ -563,7 +590,7 @@ def create_mcp_server(workspace_bucket: str) -> FastMCP:
         job = Job(job_id=job_id, items_total=len(urls))
         _jobs[job_id] = job
 
-        effective_token = _resolve_auth_token(auth_token, urls, _internal_catalog_base)
+        effective_token, auth_urls = _resolve_auth_token(auth_token, urls, _internal_catalog_base)
 
         output_name = dataset_name or f"stac-export-{job_id}"
 
@@ -580,6 +607,7 @@ def create_mcp_server(workspace_bucket: str) -> FastMCP:
             workspace_bucket,
             output_name,
             effective_token,
+            auth_urls,
             config,
         )
 
